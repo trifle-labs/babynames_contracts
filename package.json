@@ -1,0 +1,21 @@
+{
+  "name": "@trifle-labs/babynames-contracts",
+  "version": "0.1.0",
+  "description": "BabyNameMarket prediction market contracts - ABIs and deployment addresses",
+  "main": "index.js",
+  "files": [
+    "abi/",
+    "deployments/",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "export-abi": "make export-abi"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trifle-labs/babynames_contracts"
+  },
+  "license": "MIT"
+}

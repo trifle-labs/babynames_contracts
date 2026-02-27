@@ -1,0 +1,18 @@
+# Compiler output
+cache/
+out/
+
+# Build artifacts
+abi/
+
+# Environment
+.env
+
+# Broadcast
+broadcast/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
