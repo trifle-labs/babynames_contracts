@@ -14,12 +14,12 @@ contract CurveMathTest is TestHelpers {
         _createTestCategory();
 
         // Spread bets to avoid pool-full
-        _buyAs(alice, 1, 0.1 ether);
-        _buyAs(alice, 2, 0.1 ether);
+        _buyAs(alice, 1, 100_000);
+        _buyAs(alice, 2, 100_000);
         uint256 price1 = market.getCurrentPrice(1);
 
-        _buyAs(bob, 1, 0.1 ether);
-        _buyAs(bob, 2, 0.1 ether);
+        _buyAs(bob, 1, 100_000);
+        _buyAs(bob, 2, 100_000);
         uint256 price2 = market.getCurrentPrice(1);
 
         assertGt(price1, 0);
@@ -30,9 +30,9 @@ contract CurveMathTest is TestHelpers {
         _createTestCategory();
 
         // Large buys spread across pools to avoid pool-full
-        vm.deal(alice, 2000 ether);
-        _buyAs(alice, 1, 500 ether);
-        _buyAs(alice, 2, 500 ether);
+        _fundUser(alice, 2000e6);
+        _buyAs(alice, 1, 500e6);
+        _buyAs(alice, 2, 500e6);
 
         uint256 price = market.getCurrentPrice(1);
 
@@ -44,9 +44,9 @@ contract CurveMathTest is TestHelpers {
     function test_PriceBelowCeiling() public {
         _createTestCategory();
 
-        vm.deal(alice, 2000 ether);
-        _buyAs(alice, 1, 500 ether);
-        _buyAs(alice, 2, 500 ether);
+        _fundUser(alice, 2000e6);
+        _buyAs(alice, 1, 500e6);
+        _buyAs(alice, 2, 500e6);
 
         uint256 price = market.getCurrentPrice(1);
         assertLe(price, market.CEILING());
@@ -58,39 +58,39 @@ contract CurveMathTest is TestHelpers {
         assertEq(cost, 0);
     }
 
-    function test_CalculateTokensForEth_ZeroEth() public {
+    function test_CalculateTokensForAmount_Zero() public {
         _createTestCategory();
-        uint256 tokens = market.calculateTokensForEth(1, 0);
+        uint256 tokens = market.calculateTokensForAmount(1, 0);
         assertEq(tokens, 0);
     }
 
-    function test_CalculateTokensForEth_Consistency() public {
+    function test_CalculateTokensForAmount_Consistency() public {
         _createTestCategory();
 
-        uint256 tokens = market.calculateTokensForEth(1, 1 ether);
+        uint256 tokens = market.calculateTokensForAmount(1, 1e6);
         assertGt(tokens, 0);
 
         uint256 cost = market.calculateBuyCost(1, tokens);
-        // Cost should be close to 1 ether (binary search rounds down)
-        assertLe(cost, 1 ether);
-        assertGt(cost, 0.99 ether);
+        // Cost is normalized (1e18 precision), should be close to 1e18
+        assertLe(cost, 1e18);
+        assertGt(cost, 99e16);
     }
 
     function test_SimulateBuy() public {
         _createTestCategory();
 
-        _buyAs(alice, 1, 1 ether);
-        _buyAs(bob, 2, 0.5 ether);
+        _buyAs(alice, 1, 1e6);
+        _buyAs(bob, 2, 500_000);
 
         (uint256 tokens, uint256 avgPrice, uint256 expectedRedemption, ) =
-            market.simulateBuy(1, 0.5 ether);
+            market.simulateBuy(1, 500_000);
 
         assertGt(tokens, 0);
         assertGt(avgPrice, 0);
         assertGt(expectedRedemption, 0);
     }
 
-    function test_SimulateBuy_ZeroEth() public {
+    function test_SimulateBuy_Zero() public {
         _createTestCategory();
 
         (uint256 tokens, uint256 avgPrice, uint256 expectedRedemption, int256 profitIfWins) =

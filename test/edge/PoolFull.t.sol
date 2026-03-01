@@ -8,10 +8,10 @@ contract PoolFullTest is TestHelpers {
         _createTestCategory();
 
         // Fill up Olivia pool with large bet
-        _buyAs(alice, 1, 10 ether);
+        _buyAs(alice, 1, 10e6);
 
         // Small bet on Emma to create category collateral
-        _buyAs(bob, 2, 0.01 ether);
+        _buyAs(bob, 2, 10_000);
 
         // Can still buy Emma (undersubscribed)
         (bool canBuyEmma, ) = market.canBuy(2);
@@ -22,7 +22,7 @@ contract PoolFullTest is TestHelpers {
         _createTestCategory();
 
         // With tiny bets, pool-full check doesn't apply
-        _buyAs(alice, 1, 0.01 ether);
+        _buyAs(alice, 1, 10_000);
 
         (bool canBuy, ) = market.canBuy(1);
         assertTrue(canBuy);
@@ -32,7 +32,7 @@ contract PoolFullTest is TestHelpers {
         _createTestCategory();
 
         // Put enough in category to trigger pool-full checks
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         // Empty pool (Charlotte) should still be buyable
         (bool canBuy, ) = market.canBuy(3);
@@ -43,11 +43,11 @@ contract PoolFullTest is TestHelpers {
         _createTestCategory();
 
         // Create a scenario where one pool dominates
-        vm.deal(alice, 1000 ether);
-        _buyAs(alice, 1, 50 ether);
+        _fundUser(alice, 1000e6);
+        _buyAs(alice, 1, 50e6);
 
         // Small amount in other pool
-        _buyAs(bob, 2, 0.5 ether);
+        _buyAs(bob, 2, 500_000);
 
         // Check pool 1 - it might be full since it has most of the collateral
         (bool canBuy1, ) = market.canBuy(1);

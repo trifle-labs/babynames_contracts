@@ -7,8 +7,8 @@ contract ResolutionTest is TestHelpers {
     function test_Resolve() public {
         uint256 catId = _createTestCategory();
 
-        _buyAs(alice, 1, 5 ether);
-        _buyAs(bob, 2, 3 ether);
+        _buyAs(alice, 1, 5e6);
+        _buyAs(bob, 2, 3e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -18,9 +18,9 @@ contract ResolutionTest is TestHelpers {
 
         assertTrue(resolved);
         assertEq(winningPoolId, 1);
-        assertEq(totalCollateral, 8 ether);
-        assertEq(prizePool, 7.2 ether);
-        assertEq(market.treasury(), 0.8 ether);
+        assertEq(totalCollateral, 8e18); // 8e6 native normalizes to 8e18
+        assertEq(prizePool, 72e17);      // 90% of 8e18
+        assertEq(market.treasury(), 8e17); // 10% of 8e18
     }
 
     function test_Resolve_ZeroCollateral() public {
@@ -38,20 +38,20 @@ contract ResolutionTest is TestHelpers {
     function test_Claim() public {
         uint256 catId = _createTestCategory();
 
-        _buyAs(alice, 1, 5 ether);
-        _buyAs(bob, 2, 3 ether);
+        _buyAs(alice, 1, 5e6);
+        _buyAs(bob, 2, 3e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
 
-        uint256 aliceBefore = alice.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
 
         vm.prank(alice);
         market.claim(1);
 
-        uint256 aliceAfter = alice.balance;
-        // Prize pool is 7.2 ether, allow small rounding
-        assertApproxEqAbs(aliceAfter - aliceBefore, 7.2 ether, 1e12);
+        uint256 aliceAfter = token.balanceOf(alice);
+        // Prize pool is 7.2 USDC (7_200_000 native units), allow small rounding
+        assertApproxEqAbs(aliceAfter - aliceBefore, 7_200_000, 100);
 
         (, bool hasClaimed, ) = market.getUserPosition(1, alice);
         assertTrue(hasClaimed);
@@ -61,30 +61,30 @@ contract ResolutionTest is TestHelpers {
         uint256 catId = _createTestCategory();
 
         // Balanced bets across pools to avoid pool-full
-        _buyAs(alice, 1, 1 ether);
-        _buyAs(carol, 2, 2 ether);
-        _buyAs(bob, 1, 0.5 ether);
+        _buyAs(alice, 1, 1e6);
+        _buyAs(carol, 2, 2e6);
+        _buyAs(bob, 1, 500_000);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
 
-        uint256 aliceBefore = alice.balance;
-        uint256 bobBefore = bob.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
+        uint256 bobBefore = token.balanceOf(bob);
 
         vm.prank(alice);
         market.claim(1);
         vm.prank(bob);
         market.claim(1);
 
-        uint256 aliceGain = alice.balance - aliceBefore;
-        uint256 bobGain = bob.balance - bobBefore;
+        uint256 aliceGain = token.balanceOf(alice) - aliceBefore;
+        uint256 bobGain = token.balanceOf(bob) - bobBefore;
 
         // Alice bought more and earlier, should get more
         assertGt(aliceGain, bobGain);
 
-        // Total payouts ~ prize pool (90% of 3.5 ether)
-        uint256 prizePool = 3.5 ether * 9000 / 10000;
-        assertApproxEqAbs(aliceGain + bobGain, prizePool, 1e12);
+        // Total payouts ~ prize pool (90% of 3.5 USDC = 3_150_000 native)
+        uint256 expectedPrizePool = 3_500_000 * 9000 / 10000;
+        assertApproxEqAbs(aliceGain + bobGain, expectedPrizePool, 100);
     }
 
     function test_RevertWhen_NotResolver() public {
@@ -123,7 +123,7 @@ contract ResolutionTest is TestHelpers {
 
     function test_RevertWhen_ClaimTwice() public {
         uint256 catId = _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -138,7 +138,7 @@ contract ResolutionTest is TestHelpers {
 
     function test_RevertWhen_ClaimLosingPool() public {
         uint256 catId = _createTestCategory();
-        _buyAs(alice, 2, 1 ether);
+        _buyAs(alice, 2, 1e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -150,7 +150,7 @@ contract ResolutionTest is TestHelpers {
 
     function test_RevertWhen_ClaimNotResolved() public {
         _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(alice);
         vm.expectRevert(BabyNameMarket.CategoryNotResolved.selector);
@@ -159,7 +159,7 @@ contract ResolutionTest is TestHelpers {
 
     function test_RevertWhen_ClaimNoBalance() public {
         uint256 catId = _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);

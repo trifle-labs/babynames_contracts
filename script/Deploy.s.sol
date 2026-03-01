@@ -14,7 +14,8 @@ contract DeployBabyNameMarket is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        BabyNameMarket market = new BabyNameMarket(resolver);
+        address tokenAddress = vm.envAddress("TOKEN_ADDRESS");
+        BabyNameMarket market = new BabyNameMarket(resolver, tokenAddress);
 
         vm.stopBroadcast();
 
@@ -22,6 +23,7 @@ contract DeployBabyNameMarket is Script {
         string memory json = string.concat(
             '{"address":"', vm.toString(address(market)),
             '","resolver":"', vm.toString(resolver),
+            '","token":"', vm.toString(tokenAddress),
             '","chainId":', vm.toString(block.chainid),
             ',"chainName":"', config.name,
             '","deployer":"', vm.toString(vm.addr(deployerPrivateKey)),

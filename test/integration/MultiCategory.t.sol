@@ -28,10 +28,10 @@ contract MultiCategoryTest is TestHelpers {
         _createTestCategoryMale();
 
         // Bet on both categories
-        _buyAs(alice, 1, 1 ether);   // cat1 pool
-        _buyAs(alice, 4, 1 ether);   // cat2 pool
+        _buyAs(alice, 1, 1e6);   // cat1 pool
+        _buyAs(alice, 4, 1e6);   // cat2 pool
 
-        // Collateral is isolated per category
+        // Collateral is isolated per category (normalized to 18 decimals)
         (, , , uint256 total1, , , , , ) = market.getCategoryInfo(1);
         (, , , uint256 total2, , , , , ) = market.getCategoryInfo(2);
 
@@ -43,8 +43,8 @@ contract MultiCategoryTest is TestHelpers {
         _createTestCategory();
         _createTestCategoryMale();
 
-        _buyAs(alice, 1, 1 ether);
-        _buyAs(bob, 4, 1 ether);
+        _buyAs(alice, 1, 1e6);
+        _buyAs(bob, 4, 1e6);
 
         // Resolve only category 1
         vm.prank(resolver);
@@ -57,7 +57,7 @@ contract MultiCategoryTest is TestHelpers {
         assertFalse(resolved2);
 
         // Can still buy in category 2
-        _buyAs(carol, 5, 0.5 ether);
+        _buyAs(carol, 5, 500_000);
     }
 
     function test_MultipleCategoriesSequentialIds() public {

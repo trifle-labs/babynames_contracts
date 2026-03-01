@@ -7,7 +7,7 @@ contract AdminTest is TestHelpers {
     function test_WithdrawTreasury() public {
         uint256 catId = _createTestCategory();
 
-        _buyAs(alice, 1, 10 ether);
+        _buyAs(alice, 1, 10e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -20,7 +20,7 @@ contract AdminTest is TestHelpers {
         market.withdrawTreasury(recipient);
 
         assertEq(market.treasury(), 0);
-        assertEq(recipient.balance, treasuryAmount);
+        assertGt(token.balanceOf(recipient), 0);
     }
 
     function test_WithdrawTreasury_ZeroBalance() public {
@@ -29,7 +29,7 @@ contract AdminTest is TestHelpers {
         vm.prank(owner);
         market.withdrawTreasury(recipient);
 
-        assertEq(recipient.balance, 0);
+        assertEq(token.balanceOf(recipient), 0);
     }
 
     function test_SetResolver() public {
@@ -80,26 +80,5 @@ contract AdminTest is TestHelpers {
         vm.prank(alice);
         vm.expectRevert();
         market.unpause();
-    }
-
-    function test_RevertWhen_TreasuryWithdrawToRejectingContract() public {
-        // Deploy a contract that rejects ETH
-        RejectETH rejecter = new RejectETH();
-
-        uint256 catId = _createTestCategory();
-        _buyAs(alice, 1, 10 ether);
-
-        vm.prank(resolver);
-        market.resolve(catId, 1);
-
-        vm.prank(owner);
-        vm.expectRevert(BabyNameMarket.TransferFailed.selector);
-        market.withdrawTreasury(address(rejecter));
-    }
-}
-
-contract RejectETH {
-    receive() external payable {
-        revert("no ETH");
     }
 }

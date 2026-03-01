@@ -5,13 +5,13 @@ import "../helpers/TestHelpers.sol";
 
 contract ResolutionFuzzTest is TestHelpers {
     function testFuzz_PayoutsLessEqualCollateral(uint256 a1, uint256 a2) public {
-        a1 = bound(a1, 0.001 ether, 50 ether);
-        a2 = bound(a2, 0.001 ether, 50 ether);
+        a1 = bound(a1, 1_000, 50_000e6);
+        a2 = bound(a2, 1_000, 50_000e6);
 
         _createTestCategory();
 
-        vm.deal(alice, a1);
-        vm.deal(bob, a2);
+        _fundUser(alice, a1);
+        _fundUser(bob, a2);
 
         _buyAs(alice, 1, a1);
         _buyAs(bob, 2, a2);
@@ -19,10 +19,10 @@ contract ResolutionFuzzTest is TestHelpers {
         vm.prank(resolver);
         market.resolve(1, 1);
 
-        uint256 aliceBefore = alice.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         market.claim(1);
-        uint256 payout = alice.balance - aliceBefore;
+        uint256 payout = token.balanceOf(alice) - aliceBefore;
 
         assertLe(payout, a1 + a2);
 
@@ -31,15 +31,15 @@ contract ResolutionFuzzTest is TestHelpers {
     }
 
     function testFuzz_TwoWinnersShareFairly(uint256 a1, uint256 a2, uint256 loser) public {
-        a1 = bound(a1, 0.01 ether, 5 ether);
-        a2 = bound(a2, 0.01 ether, 5 ether);
-        loser = bound(loser, 10 ether, 50 ether); // loser > winners to avoid pool-full
+        a1 = bound(a1, 10_000, 5e6);
+        a2 = bound(a2, 10_000, 5e6);
+        loser = bound(loser, 10e6, 50e6); // loser > winners to avoid pool-full
 
         _createTestCategory();
 
-        vm.deal(alice, a1);
-        vm.deal(bob, a2);
-        vm.deal(carol, loser);
+        _fundUser(alice, a1);
+        _fundUser(bob, a2);
+        _fundUser(carol, loser);
 
         _buyAs(alice, 1, a1);
         _buyAs(carol, 2, loser);
@@ -48,20 +48,20 @@ contract ResolutionFuzzTest is TestHelpers {
         vm.prank(resolver);
         market.resolve(1, 1);
 
-        uint256 aliceBefore = alice.balance;
-        uint256 bobBefore = bob.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
+        uint256 bobBefore = token.balanceOf(bob);
 
         vm.prank(alice);
         market.claim(1);
         vm.prank(bob);
         market.claim(1);
 
-        uint256 alicePayout = alice.balance - aliceBefore;
-        uint256 bobPayout = bob.balance - bobBefore;
+        uint256 alicePayout = token.balanceOf(alice) - aliceBefore;
+        uint256 bobPayout = token.balanceOf(bob) - bobBefore;
 
         uint256 totalPayout = alicePayout + bobPayout;
         uint256 prizePool = (a1 + a2 + loser) * 9000 / 10000;
 
-        assertApproxEqAbs(totalPayout, prizePool, 1e12);
+        assertApproxEqAbs(totalPayout, prizePool, 1e3);
     }
 }

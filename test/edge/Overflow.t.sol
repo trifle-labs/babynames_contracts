@@ -4,17 +4,17 @@ pragma solidity ^0.8.20;
 import "../helpers/TestHelpers.sol";
 
 contract OverflowTest is TestHelpers {
-    function test_LargeEthBuy() public {
+    function test_LargeBuy() public {
         _createTestCategory();
 
-        vm.deal(alice, 1000 ether);
+        _fundUser(alice, 1000e6);
         // Buy large amounts spread across pools
-        _buyAs(alice, 1, 250 ether);
-        _buyAs(alice, 2, 250 ether);
+        _buyAs(alice, 1, 250e6);
+        _buyAs(alice, 2, 250e6);
 
         (, , uint256 totalSupply, uint256 collateral, uint256 price) = market.getPoolInfo(1);
         assertGt(totalSupply, 0);
-        assertEq(collateral, 250 ether);
+        assertEq(collateral, 250 ether); // 250e6 USDC normalizes to 250e18
         assertGt(price, 0);
     }
 
@@ -24,16 +24,14 @@ contract OverflowTest is TestHelpers {
         // Spread across pools to avoid pool-full
         for (uint256 i = 0; i < 25; i++) {
             address buyer = address(uint160(100 + i));
-            vm.deal(buyer, 1 ether);
-            vm.prank(buyer);
-            market.buy{value: 0.01 ether}(1);
-            vm.prank(buyer);
-            market.buy{value: 0.01 ether}(2);
+            _fundUser(buyer, 1e6);
+            _buyAs(buyer, 1, 10_000);
+            _buyAs(buyer, 2, 10_000);
         }
 
         (, , uint256 totalSupply, uint256 collateral, ) = market.getPoolInfo(1);
         assertGt(totalSupply, 0);
-        assertEq(collateral, 0.25 ether);
+        assertEq(collateral, 0.25 ether); // 25 * 10_000 = 250_000 USDC -> 0.25e18
     }
 
     function test_LargeNumberOfPools() public {
@@ -53,20 +51,20 @@ contract OverflowTest is TestHelpers {
     function test_LargeBuyThenResolveAndClaim() public {
         _createTestCategory();
 
-        vm.deal(alice, 1000 ether);
-        vm.deal(bob, 500 ether);
+        _fundUser(alice, 1000e6);
+        _fundUser(bob, 500e6);
 
-        _buyAs(alice, 1, 800 ether);
-        _buyAs(bob, 2, 200 ether);
+        _buyAs(alice, 1, 800e6);
+        _buyAs(bob, 2, 200e6);
 
         vm.prank(resolver);
         market.resolve(1, 1);
 
-        uint256 aliceBefore = alice.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         market.claim(1);
 
-        uint256 payout = alice.balance - aliceBefore;
-        assertApproxEqAbs(payout, 900 ether, 1e12);
+        uint256 payout = token.balanceOf(alice) - aliceBefore;
+        assertApproxEqAbs(payout, 900e6, 1e3);
     }
 }

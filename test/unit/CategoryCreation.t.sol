@@ -137,7 +137,7 @@ contract CategoryCreationTest is TestHelpers {
     function test_RevertWhen_AddNameToResolvedCategory() public {
         uint256 catId = _createTestCategory();
 
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);

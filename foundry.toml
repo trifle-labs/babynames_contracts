@@ -22,7 +22,7 @@ base = "${BASE_RPC_URL}"
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
 
 [etherscan]
-mainnet = { key = "${ETHERSCAN_API_KEY}" }
-sepolia = { key = "${ETHERSCAN_API_KEY}" }
-base = { key = "${ETHERSCAN_API_KEY}", url = "https://api.basescan.org/api" }
-base_sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api" }
+mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=1" }
+sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=11155111" }
+base = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=8453" }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=84532" }

@@ -8,13 +8,13 @@ contract BuyingTest is TestHelpers {
         _createTestCategory();
 
         vm.prank(alice);
-        market.buy{value: 1 ether}(1);
+        market.buy(1, 1e6);
 
         (uint256 tokenBalance, , ) = market.getUserPosition(1, alice);
         assertGt(tokenBalance, 0);
 
         (, , , uint256 collateral, uint256 price) = market.getPoolInfo(1);
-        assertEq(collateral, 1 ether);
+        assertEq(collateral, 1e18); // 1e6 native normalizes to 1e18
         assertGt(price, 0);
     }
 
@@ -22,12 +22,12 @@ contract BuyingTest is TestHelpers {
         _createTestCategory();
 
         // Spread bets to avoid pool-full
-        _buyAs(alice, 1, 0.5 ether);
-        _buyAs(carol, 2, 0.5 ether);
+        _buyAs(alice, 1, 500_000);
+        _buyAs(carol, 2, 500_000);
 
         uint256 priceAfterAlice = market.getCurrentPrice(1);
 
-        _buyAs(bob, 1, 0.5 ether);
+        _buyAs(bob, 1, 500_000);
         uint256 priceAfterBob = market.getCurrentPrice(1);
 
         // Price increases
@@ -42,11 +42,11 @@ contract BuyingTest is TestHelpers {
     function test_BuyUpdatesCollateral() public {
         _createTestCategory();
 
-        _buyAs(alice, 1, 2 ether);
-        _buyAs(bob, 2, 1 ether);
+        _buyAs(alice, 1, 2e6);
+        _buyAs(bob, 2, 1e6);
 
         (, , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
-        assertEq(totalCollateral, 3 ether);
+        assertEq(totalCollateral, 3e18); // 3e6 native normalizes to 3e18
     }
 
     event TokensPurchased(uint256 indexed poolId, address indexed buyer, uint256 tokens, uint256 cost, uint256 avgPrice);
@@ -57,7 +57,7 @@ contract BuyingTest is TestHelpers {
         vm.prank(alice);
         vm.expectEmit(true, true, false, false);
         emit TokensPurchased(1, alice, 0, 0, 0);
-        market.buy{value: 1 ether}(1);
+        market.buy(1, 1e6);
     }
 
     function test_RevertWhen_BuyInvalidPool() public {
@@ -65,7 +65,7 @@ contract BuyingTest is TestHelpers {
 
         vm.prank(alice);
         vm.expectRevert(BabyNameMarket.InvalidPool.selector);
-        market.buy{value: 1 ether}(999);
+        market.buy(999, 1e6);
     }
 
     function test_RevertWhen_BuyBelowMinBet() public {
@@ -73,7 +73,7 @@ contract BuyingTest is TestHelpers {
 
         vm.prank(alice);
         vm.expectRevert(BabyNameMarket.InsufficientBet.selector);
-        market.buy{value: 0.0001 ether}(1);
+        market.buy(1, 100);
     }
 
     function test_RevertWhen_BuyZeroValue() public {
@@ -81,7 +81,7 @@ contract BuyingTest is TestHelpers {
 
         vm.prank(alice);
         vm.expectRevert(BabyNameMarket.InsufficientBet.selector);
-        market.buy{value: 0}(1);
+        market.buy(1, 0);
     }
 
     function test_RevertWhen_BettingClosed() public {
@@ -91,7 +91,7 @@ contract BuyingTest is TestHelpers {
 
         vm.prank(alice);
         vm.expectRevert(BabyNameMarket.BettingClosed.selector);
-        market.buy{value: 1 ether}(1);
+        market.buy(1, 1e6);
     }
 
     function test_RevertWhen_BuyPaused() public {
@@ -102,19 +102,19 @@ contract BuyingTest is TestHelpers {
 
         vm.prank(alice);
         vm.expectRevert();
-        market.buy{value: 1 ether}(1);
+        market.buy(1, 1e6);
     }
 
     function test_RevertWhen_BuyResolvedCategory() public {
         _createTestCategory();
 
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(resolver);
         market.resolve(1, 1);
 
         vm.prank(bob);
         vm.expectRevert(BabyNameMarket.CategoryAlreadyResolved.selector);
-        market.buy{value: 1 ether}(1);
+        market.buy(1, 1e6);
     }
 }

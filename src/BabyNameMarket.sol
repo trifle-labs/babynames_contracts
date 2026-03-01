@@ -4,6 +4,9 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title BabyNameMarket
@@ -18,6 +21,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * - User-created categories and pools
  */
 contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
 
     // ============ Constants ============
 
@@ -31,10 +35,10 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     /// @notice House rake in basis points (1000 = 10%)
     uint256 public constant HOUSE_RAKE_BPS = 1000;
 
-    /// @notice Minimum category collateral before pool-full cap kicks in
+    /// @notice Minimum category collateral before pool-full cap kicks in (18-decimal normalized)
     uint256 public constant MIN_CATEGORY_COLLATERAL = 0.1 ether;
 
-    /// @notice Minimum bet amount
+    /// @notice Minimum bet amount (18-decimal normalized)
     uint256 public constant MIN_BET = 0.001 ether;
 
     /// @notice Precision for fixed-point math
@@ -42,6 +46,17 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Buffer for pool-full check (95% = can buy if redemption >= 95% of price)
     uint256 private constant POOL_FULL_BUFFER_BPS = 9500;
+
+    // ============ Token Config ============
+
+    /// @notice The ERC20 token used for all collateral (e.g., USDC)
+    IERC20 public immutable collateralToken;
+
+    /// @notice Token decimals (e.g., 6 for USDC, 18 for DAI)
+    uint8 public immutable tokenDecimals;
+
+    /// @notice Scale factor to normalize token amounts to 18-decimal internal math
+    uint256 private immutable scaleFactor;
 
     // ============ Types ============
 
@@ -51,7 +66,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 categoryId;
         string name;
         uint256 totalSupply;    // Total tokens minted (scaled by 1e18)
-        uint256 collateral;     // ETH collected into this pool
+        uint256 collateral;     // Collateral collected (normalized to 18 decimals)
     }
 
     struct Category {
@@ -124,6 +139,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     event TreasuryWithdrawn(address indexed to, uint256 amount);
     event ResolverUpdated(address indexed oldResolver, address indexed newResolver);
+    event PoolSubsidized(uint256 indexed poolId, uint256 amount);
 
     // ============ Errors ============
 
@@ -146,8 +162,17 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     // ============ Constructor ============
 
-    constructor(address _resolver) Ownable(msg.sender) {
+    constructor(address _resolver, address _token) Ownable(msg.sender) {
         resolver = _resolver;
+        collateralToken = IERC20(_token);
+        uint8 d;
+        try IERC20Metadata(_token).decimals() returns (uint8 dec) {
+            d = dec;
+        } catch {
+            d = 18;
+        }
+        tokenDecimals = d;
+        scaleFactor = 10 ** (18 - d);
     }
 
     // ============ Modifiers ============
@@ -168,10 +193,29 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 amount = treasury;
         treasury = 0;
 
-        (bool sent, ) = to.call{value: amount}("");
-        if (!sent) revert TransferFailed();
+        collateralToken.safeTransfer(to, _denormalize(amount));
 
         emit TreasuryWithdrawn(to, amount);
+    }
+
+    /**
+     * @notice Inject prize money into a pool without minting tokens
+     * @param poolId The pool to subsidize
+     * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
+     */
+    function subsidize(uint256 poolId, uint256 amount) external onlyOwner {
+        if (poolId >= nextPoolId) revert InvalidPool();
+        Pool storage pool = pools[poolId];
+        Category storage cat = categories[pool.categoryId];
+        if (cat.resolved) revert CategoryAlreadyResolved();
+
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        uint256 normalizedAmount = _normalize(amount);
+        pool.collateral += normalizedAmount;
+        cat.totalCollateral += normalizedAmount;
+
+        emit PoolSubsidized(poolId, amount);
     }
 
     function pause() external onlyOwner {
@@ -258,11 +302,14 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Purchase tokens in a pool
      * @param poolId The pool to buy into
+     * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
      * @dev Reverts if pool is oversubscribed (expected redemption < price)
      */
-    function buy(uint256 poolId) external payable nonReentrant whenNotPaused {
+    function buy(uint256 poolId, uint256 amount) external nonReentrant whenNotPaused {
         if (poolId >= nextPoolId) revert InvalidPool();
-        if (msg.value < MIN_BET) revert InsufficientBet();
+
+        uint256 normalizedAmount = _normalize(amount);
+        if (normalizedAmount < MIN_BET) revert InsufficientBet();
 
         Pool storage pool = pools[poolId];
         Category storage cat = categories[pool.categoryId];
@@ -272,22 +319,25 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
         // Check pool-full condition (only after minimum threshold)
         if (cat.totalCollateral >= MIN_CATEGORY_COLLATERAL) {
-            if (!_canBuy(poolId, msg.value)) revert PoolOversubscribed();
+            if (!_canBuy(poolId, normalizedAmount)) revert PoolOversubscribed();
         }
 
-        // Calculate tokens for ETH amount
-        uint256 tokens = _calculateTokensForEth(pool.totalSupply, msg.value);
+        // Transfer tokens from buyer
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Calculate tokens for normalized amount
+        uint256 tokens = _calculateTokensForEth(pool.totalSupply, normalizedAmount);
         if (tokens == 0) revert InsufficientBet();
 
-        uint256 avgPrice = msg.value * PRECISION / tokens;
+        uint256 avgPrice = normalizedAmount * PRECISION / tokens;
 
         // Update state
         pool.totalSupply += tokens;
-        pool.collateral += msg.value;
-        cat.totalCollateral += msg.value;
+        pool.collateral += normalizedAmount;
+        cat.totalCollateral += normalizedAmount;
         balances[poolId][msg.sender] += tokens;
 
-        emit TokensPurchased(poolId, msg.sender, tokens, msg.value, avgPrice);
+        emit TokensPurchased(poolId, msg.sender, tokens, normalizedAmount, avgPrice);
     }
 
     /**
@@ -374,12 +424,11 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
         claimed[poolId][msg.sender] = true;
 
-        // Calculate payout: user's share of prize pool
+        // Calculate payout: user's share of prize pool (in normalized scale)
         uint256 redemptionRate = cat.prizePool * PRECISION / pool.totalSupply;
         uint256 payout = userBalance * redemptionRate / PRECISION;
 
-        (bool sent, ) = msg.sender.call{value: payout}("");
-        if (!sent) revert TransferFailed();
+        collateralToken.safeTransfer(msg.sender, _denormalize(payout));
 
         emit WinningsClaimed(poolId, msg.sender, userBalance, payout);
     }
@@ -494,6 +543,18 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         return result;
     }
 
+    // ============ Token Normalization ============
+
+    /// @notice Convert native token amount to 18-decimal internal representation
+    function _normalize(uint256 amount) internal view returns (uint256) {
+        return amount * scaleFactor;
+    }
+
+    /// @notice Convert 18-decimal internal amount to native token decimals
+    function _denormalize(uint256 amount) internal view returns (uint256) {
+        return amount / scaleFactor;
+    }
+
     // ============ View Functions ============
 
     /**
@@ -542,12 +603,14 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Simulate a purchase
+     * @param poolId The pool to simulate buying into
+     * @param amount Token amount in native decimals
      * @return tokens Amount of tokens that would be received
      * @return avgPrice Average price paid per token
      * @return expectedRedemption Expected redemption if this pool wins
-     * @return profitIfWins Profit in ETH if this pool wins (can be negative!)
+     * @return profitIfWins Profit (normalized) if this pool wins (can be negative!)
      */
-    function simulateBuy(uint256 poolId, uint256 ethAmount) external view returns (
+    function simulateBuy(uint256 poolId, uint256 amount) external view returns (
         uint256 tokens,
         uint256 avgPrice,
         uint256 expectedRedemption,
@@ -556,20 +619,22 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         Pool storage pool = pools[poolId];
         Category storage cat = categories[pool.categoryId];
 
-        tokens = _calculateTokensForEth(pool.totalSupply, ethAmount);
+        uint256 normalizedAmount = _normalize(amount);
+
+        tokens = _calculateTokensForEth(pool.totalSupply, normalizedAmount);
         if (tokens == 0) return (0, 0, 0, 0);
 
-        avgPrice = ethAmount * PRECISION / tokens;
+        avgPrice = normalizedAmount * PRECISION / tokens;
 
         // Project redemption after this purchase
-        uint256 newTotalCollateral = cat.totalCollateral + ethAmount;
+        uint256 newTotalCollateral = cat.totalCollateral + normalizedAmount;
         uint256 newPoolSupply = pool.totalSupply + tokens;
         uint256 prizePool = newTotalCollateral * (10000 - HOUSE_RAKE_BPS) / 10000;
         expectedRedemption = prizePool * PRECISION / newPoolSupply;
 
         // Calculate profit
         uint256 totalRedemption = tokens * expectedRedemption / PRECISION;
-        profitIfWins = int256(totalRedemption) - int256(ethAmount);
+        profitIfWins = int256(totalRedemption) - int256(normalizedAmount);
     }
 
     /**
@@ -658,9 +723,11 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Calculate tokens received for ETH amount
+     * @notice Calculate tokens received for a token amount
+     * @param poolId The pool to calculate for
+     * @param amount Token amount in native decimals
      */
-    function calculateTokensForEth(uint256 poolId, uint256 ethAmount) external view returns (uint256) {
-        return _calculateTokensForEth(pools[poolId].totalSupply, ethAmount);
+    function calculateTokensForAmount(uint256 poolId, uint256 amount) external view returns (uint256) {
+        return _calculateTokensForEth(pools[poolId].totalSupply, _normalize(amount));
     }
 }

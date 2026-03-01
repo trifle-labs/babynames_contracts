@@ -12,8 +12,8 @@ contract ViewFunctionsTest is TestHelpers {
 
     function test_GetExpectedRedemption_WithBets() public {
         _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
-        _buyAs(bob, 2, 1 ether);
+        _buyAs(alice, 1, 1e6);
+        _buyAs(bob, 2, 1e6);
 
         uint256 redemption = market.getExpectedRedemption(1);
         assertGt(redemption, 0);
@@ -34,7 +34,7 @@ contract ViewFunctionsTest is TestHelpers {
 
     function test_CanBuy_ResolvedCategory() public {
         uint256 catId = _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -56,7 +56,7 @@ contract ViewFunctionsTest is TestHelpers {
 
     function test_GetPoolInfo() public {
         _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         (uint256 catId, string memory name, uint256 totalSupply, uint256 collateral, uint256 price) =
             market.getPoolInfo(1);
@@ -64,7 +64,7 @@ contract ViewFunctionsTest is TestHelpers {
         assertEq(catId, 1);
         assertEq(name, "Olivia");
         assertGt(totalSupply, 0);
-        assertEq(collateral, 1 ether);
+        assertEq(collateral, 1e18); // 1e6 native normalizes to 1e18
         assertGt(price, 0);
     }
 
@@ -81,7 +81,7 @@ contract ViewFunctionsTest is TestHelpers {
 
     function test_GetUserPosition_WithTokens() public {
         _createTestCategory();
-        _buyAs(alice, 1, 1 ether);
+        _buyAs(alice, 1, 1e6);
 
         (uint256 tokenBalance, bool hasClaimed, uint256 potentialPayout) =
             market.getUserPosition(1, alice);

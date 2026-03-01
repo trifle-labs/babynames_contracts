@@ -16,54 +16,54 @@ contract FullFlowTest is TestHelpers {
         );
 
         // Balanced bets to avoid pool-full
-        _buyAs(alice, 1, 1 ether);
-        _buyAs(carol, 2, 1.5 ether);
-        _buyAs(bob, 1, 0.5 ether);
-        _buyAs(alice, 3, 0.5 ether);
-        _buyAs(alice, 4, 0.5 ether);
+        _buyAs(alice, 1, 1e6);
+        _buyAs(carol, 2, 1_500_000);
+        _buyAs(bob, 1, 500_000);
+        _buyAs(alice, 3, 500_000);
+        _buyAs(alice, 4, 500_000);
 
         (, , , uint256 total, , , , , ) = market.getCategoryInfo(catId);
-        assertEq(total, 4 ether);
+        assertEq(total, 4 ether); // 4e6 USDC normalizes to 4e18
 
         vm.prank(resolver);
         market.resolve(catId, 1);
 
-        uint256 aliceBefore = alice.balance;
-        uint256 bobBefore = bob.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
+        uint256 bobBefore = token.balanceOf(bob);
 
         vm.prank(alice);
         market.claim(1);
         vm.prank(bob);
         market.claim(1);
 
-        uint256 aliceGain = alice.balance - aliceBefore;
-        uint256 bobGain = bob.balance - bobBefore;
+        uint256 aliceGain = token.balanceOf(alice) - aliceBefore;
+        uint256 bobGain = token.balanceOf(bob) - bobBefore;
 
         assertGt(aliceGain, bobGain);
-        assertApproxEqAbs(aliceGain + bobGain, 3.6 ether, 1e12);
+        assertApproxEqAbs(aliceGain + bobGain, 3_600_000, 1e3);
     }
 
     function test_FullFlow_TreasuryAccumulation() public {
         _createTestCategory();
         _createTestCategoryMale();
 
-        _buyAs(alice, 1, 5 ether);
-        _buyAs(bob, 2, 3 ether);
-        _buyAs(carol, 4, 2 ether);
-        _buyAs(alice, 5, 1 ether);
+        _buyAs(alice, 1, 5e6);
+        _buyAs(bob, 2, 3e6);
+        _buyAs(carol, 4, 2e6);
+        _buyAs(alice, 5, 1e6);
 
         vm.startPrank(resolver);
         market.resolve(1, 1);
         market.resolve(2, 4);
         vm.stopPrank();
 
-        assertEq(market.treasury(), 1.1 ether);
+        assertEq(market.treasury(), 1.1 ether); // 1.1e6 USDC normalizes to 1.1e18
     }
 
     function test_FullFlow_ClaimAfterTreasuryWithdraw() public {
         uint256 catId = _createTestCategory();
-        _buyAs(alice, 1, 5 ether);
-        _buyAs(bob, 2, 3 ether);
+        _buyAs(alice, 1, 5e6);
+        _buyAs(bob, 2, 3e6);
 
         vm.prank(resolver);
         market.resolve(catId, 1);
@@ -71,10 +71,10 @@ contract FullFlowTest is TestHelpers {
         vm.prank(owner);
         market.withdrawTreasury(owner);
 
-        uint256 aliceBefore = alice.balance;
+        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         market.claim(1);
 
-        assertApproxEqAbs(alice.balance - aliceBefore, 7.2 ether, 1e12);
+        assertApproxEqAbs(token.balanceOf(alice) - aliceBefore, 7_200_000, 1e3);
     }
 }
