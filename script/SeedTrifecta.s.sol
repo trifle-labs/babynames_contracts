@@ -47,7 +47,7 @@ contract SeedTrifecta is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1], " / ", names[2]);
         firstTwo[1] = string.concat(names[0], " / ", names[1], " / ", names[3]);
-        uint256 catId = market.createCategory(year, 123, gender, firstTwo, deadline);
+        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline);
 
         console.log("Created trifecta category:", catId);
 

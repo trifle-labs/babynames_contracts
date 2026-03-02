@@ -45,7 +45,7 @@ contract BuyingTest is TestHelpers {
         _buyAs(alice, 1, 2e6);
         _buyAs(bob, 2, 1e6);
 
-        (, , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
+        (, , , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
         assertEq(totalCollateral, 3e18); // 3e6 native normalizes to 3e18
     }
 

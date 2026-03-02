@@ -31,7 +31,7 @@ contract BuyFuzzTest is TestHelpers {
         _buyAs(alice, 1, amount1);
         _buyAs(bob, 2, amount2);
 
-        (, , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
+        (, , , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
         assertEq(totalCollateral, (amount1 + amount2) * 1e12);
     }
 
@@ -47,7 +47,7 @@ contract BuyFuzzTest is TestHelpers {
         _buyAs(alice, 1, a1);
         _buyAs(bob, 2, a2);
 
-        (, , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
+        (, , , , uint256 totalCollateral, , , , , ) = market.getCategoryInfo(1);
         assertEq(totalCollateral, (a1 + a2) * 1e12);
     }
 }

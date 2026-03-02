@@ -103,6 +103,7 @@ contract ViewFunctionsTest is TestHelpers {
         (
             uint256 year,
             uint256 position,
+            ,
             BabyNameMarket.Gender gender,
             ,
             uint256 poolCount,

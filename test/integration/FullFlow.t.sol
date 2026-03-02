@@ -12,7 +12,7 @@ contract FullFlowTest is TestHelpers {
         names[3] = "Sophia";
 
         uint256 catId = market.createCategory(
-            2025, 1, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days
+            2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days
         );
 
         // Balanced bets to avoid pool-full
@@ -22,7 +22,7 @@ contract FullFlowTest is TestHelpers {
         _buyAs(alice, 3, 500_000);
         _buyAs(alice, 4, 500_000);
 
-        (, , , uint256 total, , , , , ) = market.getCategoryInfo(catId);
+        (, , , , uint256 total, , , , , ) = market.getCategoryInfo(catId);
         assertEq(total, 4 ether); // 4e6 USDC normalizes to 4e18
 
         vm.prank(resolver);

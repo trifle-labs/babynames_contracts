@@ -101,7 +101,7 @@ contract SeedCategories is Script {
         for (uint256 i = 0; i < 10; i++) {
             nameList[i] = names[i];
         }
-        market.createCategory(year, position, gender, nameList, deadline);
+        market.createCategory(year, position, 0, gender, nameList, deadline);
     }
 
     function _createExactaCategory(
@@ -116,7 +116,7 @@ contract SeedCategories is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1]);
         firstTwo[1] = string.concat(names[0], " / ", names[2]);
-        uint256 catId = market.createCategory(year, 12, gender, firstTwo, deadline);
+        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline);
 
         // Add remaining 88 pairs
         for (uint256 i = 0; i < 10; i++) {
@@ -144,7 +144,7 @@ contract SeedCategories is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1], " / ", names[2]);
         firstTwo[1] = string.concat(names[0], " / ", names[1], " / ", names[3]);
-        uint256 catId = market.createCategory(year, 123, gender, firstTwo, deadline);
+        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline);
 
         // Add remaining 718 triples
         for (uint256 i = 0; i < 10; i++) {

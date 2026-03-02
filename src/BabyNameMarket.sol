@@ -19,6 +19,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
  * - "Pool full" mechanism prevents buying when winners would lose
  * - 10% house rake taken at resolution
  * - User-created categories and pools
+ * - Category types: single position, exacta, trifecta, top-N
  */
 contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -47,6 +48,13 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     /// @notice Buffer for pool-full check (95% = can buy if redemption >= 95% of price)
     uint256 private constant POOL_FULL_BUFFER_BPS = 9500;
 
+    // ============ Category Type Constants ============
+
+    uint8 public constant CAT_SINGLE = 0;
+    uint8 public constant CAT_EXACTA = 1;
+    uint8 public constant CAT_TRIFECTA = 2;
+    uint8 public constant CAT_TOP_N = 3;
+
     // ============ Token Config ============
 
     /// @notice The ERC20 token used for all collateral (e.g., USDC)
@@ -71,14 +79,16 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     struct Category {
         uint256 year;
-        uint256 position;       // Rank being predicted (1-1000)
+        uint256 position;       // Rank being predicted (1-1000) or N for top-N
+        uint8 categoryType;     // 0=single, 1=exacta, 2=trifecta, 3=topN
         Gender gender;
         uint256[] poolIds;
         uint256 totalCollateral;
         bool resolved;
-        uint256 winningPoolId;
-        uint256 prizePool;      // Total collateral minus rake
-        uint256 deadline;       // Betting closes at this timestamp
+        uint256 winningPoolId;      // For single/exacta/trifecta (single winner)
+        uint256[] winningPoolIds;   // For topN (multiple winners)
+        uint256 prizePool;          // Total collateral minus rake
+        uint256 deadline;           // Betting closes at this timestamp
     }
 
     // ============ State ============
@@ -103,6 +113,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 indexed categoryId,
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         uint256 deadline
     );
@@ -125,6 +136,14 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 indexed categoryId,
         uint256 winningPoolId,
         string winningName,
+        uint256 totalCollateral,
+        uint256 prizePool,
+        uint256 rake
+    );
+
+    event CategoryResolvedTopN(
+        uint256 indexed categoryId,
+        uint256[] winningPoolIds,
         uint256 totalCollateral,
         uint256 prizePool,
         uint256 rake
@@ -159,6 +178,12 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     error InvalidDeadline();
     error TransferFailed();
     error PoolNotInCategory();
+    error InvalidCategoryType();
+    error NotTopNCategory();
+    error NotSingleWinnerCategory();
+    error EmptyWinners();
+    error DuplicateWinner();
+    error TooManyWinners();
 
     // ============ Constructor ============
 
@@ -231,7 +256,8 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Create a new prediction category with initial pools
      * @param year The year of SSA data (e.g., 2025)
-     * @param position The rank being predicted (1-1000)
+     * @param position The rank being predicted (1-1000) or N for top-N categories
+     * @param categoryType 0=single, 1=exacta, 2=trifecta, 3=topN
      * @param gender Male or Female
      * @param names Initial pool names (minimum 2)
      * @param deadline Timestamp when betting closes
@@ -239,11 +265,13 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     function createCategory(
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         string[] calldata names,
         uint256 deadline
     ) external whenNotPaused returns (uint256 categoryId) {
         if (names.length < 2) revert MinTwoOptions();
+        if (categoryType > CAT_TOP_N) revert InvalidCategoryType();
         if (position < 1 || position > 1000) revert InvalidPosition();
         if (deadline <= block.timestamp) revert InvalidDeadline();
 
@@ -252,6 +280,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         Category storage cat = categories[categoryId];
         cat.year = year;
         cat.position = position;
+        cat.categoryType = categoryType;
         cat.gender = gender;
         cat.deadline = deadline;
 
@@ -259,7 +288,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
             _createPool(categoryId, names[i]);
         }
 
-        emit CategoryCreated(categoryId, year, position, gender, deadline);
+        emit CategoryCreated(categoryId, year, position, categoryType, gender, deadline);
     }
 
     /**
@@ -369,7 +398,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     // ============ Resolution ============
 
     /**
-     * @notice Resolve a category with the winning name
+     * @notice Resolve a single-winner category (single/exacta/trifecta)
      * @param categoryId The category to resolve
      * @param winningPoolId The pool that won
      */
@@ -381,6 +410,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
         Category storage cat = categories[categoryId];
         if (cat.resolved) revert CategoryAlreadyResolved();
+        if (cat.categoryType == CAT_TOP_N) revert NotSingleWinnerCategory();
 
         Pool storage winningPool = pools[winningPoolId];
         if (winningPool.categoryId != categoryId) revert PoolNotInCategory();
@@ -406,6 +436,54 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Resolve a top-N category with multiple winning pools
+     * @param categoryId The category to resolve
+     * @param _winningPoolIds Array of pool IDs that won (names in top N)
+     */
+    function resolveTopN(
+        uint256 categoryId,
+        uint256[] calldata _winningPoolIds
+    ) external onlyResolver {
+        if (categoryId >= nextCategoryId) revert InvalidCategory();
+
+        Category storage cat = categories[categoryId];
+        if (cat.resolved) revert CategoryAlreadyResolved();
+        if (cat.categoryType != CAT_TOP_N) revert NotTopNCategory();
+        if (_winningPoolIds.length == 0) revert EmptyWinners();
+        if (_winningPoolIds.length > cat.position) revert TooManyWinners();
+
+        // Validate all pools belong to this category and no duplicates
+        for (uint256 i = 0; i < _winningPoolIds.length; i++) {
+            if (pools[_winningPoolIds[i]].categoryId != categoryId) revert PoolNotInCategory();
+            for (uint256 j = 0; j < i; j++) {
+                if (_winningPoolIds[i] == _winningPoolIds[j]) revert DuplicateWinner();
+            }
+        }
+
+        // Calculate rake and prize pool
+        uint256 rake = cat.totalCollateral * HOUSE_RAKE_BPS / 10000;
+        uint256 prizePool = cat.totalCollateral - rake;
+
+        // Update state
+        cat.resolved = true;
+        cat.prizePool = prizePool;
+        treasury += rake;
+
+        // Store winning pool IDs
+        for (uint256 i = 0; i < _winningPoolIds.length; i++) {
+            cat.winningPoolIds.push(_winningPoolIds[i]);
+        }
+
+        emit CategoryResolvedTopN(
+            categoryId,
+            _winningPoolIds,
+            cat.totalCollateral,
+            prizePool,
+            rake
+        );
+    }
+
+    /**
      * @notice Claim winnings from a resolved category
      * @param poolId The winning pool to claim from
      */
@@ -416,21 +494,49 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         Category storage cat = categories[pool.categoryId];
 
         if (!cat.resolved) revert CategoryNotResolved();
-        if (cat.winningPoolId != poolId) revert NotWinningPool();
         if (claimed[poolId][msg.sender]) revert AlreadyClaimed();
 
         uint256 userBalance = balances[poolId][msg.sender];
         if (userBalance == 0) revert NoBalance();
 
-        claimed[poolId][msg.sender] = true;
+        uint256 payout;
 
-        // Calculate payout: user's share of prize pool (in normalized scale)
-        uint256 redemptionRate = cat.prizePool * PRECISION / pool.totalSupply;
-        uint256 payout = userBalance * redemptionRate / PRECISION;
+        if (cat.categoryType == CAT_TOP_N) {
+            // Multi-winner: check pool is in winning set
+            if (!_isWinningPool(cat, poolId)) revert NotWinningPool();
+
+            // Calculate total supply across all winning pools
+            uint256 totalWinningSupply = 0;
+            for (uint256 i = 0; i < cat.winningPoolIds.length; i++) {
+                totalWinningSupply += pools[cat.winningPoolIds[i]].totalSupply;
+            }
+
+            // Payout: user's share of entire prize pool across all winning pools
+            uint256 redemptionRate = cat.prizePool * PRECISION / totalWinningSupply;
+            payout = userBalance * redemptionRate / PRECISION;
+        } else {
+            // Single winner
+            if (cat.winningPoolId != poolId) revert NotWinningPool();
+
+            uint256 redemptionRate = cat.prizePool * PRECISION / pool.totalSupply;
+            payout = userBalance * redemptionRate / PRECISION;
+        }
+
+        claimed[poolId][msg.sender] = true;
 
         collateralToken.safeTransfer(msg.sender, _denormalize(payout));
 
         emit WinningsClaimed(poolId, msg.sender, userBalance, payout);
+    }
+
+    /**
+     * @notice Check if a pool is in the winning set for a top-N category
+     */
+    function _isWinningPool(Category storage cat, uint256 poolId) internal view returns (bool) {
+        for (uint256 i = 0; i < cat.winningPoolIds.length; i++) {
+            if (cat.winningPoolIds[i] == poolId) return true;
+        }
+        return false;
     }
 
     // ============ Curve Math ============
@@ -670,6 +776,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     function getCategoryInfo(uint256 categoryId) external view returns (
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         uint256 totalCollateral,
         uint256 poolCount,
@@ -682,6 +789,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         return (
             cat.year,
             cat.position,
+            cat.categoryType,
             cat.gender,
             cat.totalCollateral,
             cat.poolIds.length,
@@ -690,6 +798,13 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
             cat.prizePool,
             cat.deadline
         );
+    }
+
+    /**
+     * @notice Get winning pool IDs for a top-N category
+     */
+    function getWinningPoolIds(uint256 categoryId) external view returns (uint256[] memory) {
+        return categories[categoryId].winningPoolIds;
     }
 
     /**
@@ -707,11 +822,24 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         hasClaimed = claimed[poolId][user];
 
         if (tokenBalance > 0 && pool.totalSupply > 0) {
-            uint256 prizePool = cat.resolved
-                ? cat.prizePool
-                : cat.totalCollateral * (10000 - HOUSE_RAKE_BPS) / 10000;
-            uint256 redemptionRate = prizePool * PRECISION / pool.totalSupply;
-            potentialPayout = tokenBalance * redemptionRate / PRECISION;
+            if (cat.categoryType == CAT_TOP_N && cat.resolved) {
+                // For resolved topN, compute payout across all winning pools
+                if (_isWinningPool(cat, poolId)) {
+                    uint256 totalWinningSupply = 0;
+                    for (uint256 i = 0; i < cat.winningPoolIds.length; i++) {
+                        totalWinningSupply += pools[cat.winningPoolIds[i]].totalSupply;
+                    }
+                    uint256 redemptionRate = cat.prizePool * PRECISION / totalWinningSupply;
+                    potentialPayout = tokenBalance * redemptionRate / PRECISION;
+                }
+                // else: not a winning pool, potentialPayout stays 0
+            } else {
+                uint256 prizePool = cat.resolved
+                    ? cat.prizePool
+                    : cat.totalCollateral * (10000 - HOUSE_RAKE_BPS) / 10000;
+                uint256 redemptionRate = prizePool * PRECISION / pool.totalSupply;
+                potentialPayout = tokenBalance * redemptionRate / PRECISION;
+            }
         }
     }
 

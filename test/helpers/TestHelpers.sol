@@ -67,6 +67,7 @@ abstract contract TestHelpers is Test {
         return market.createCategory(
             2025,
             1,
+            0, // CAT_SINGLE
             BabyNameMarket.Gender.Female,
             names,
             block.timestamp + DEFAULT_DEADLINE_OFFSET
@@ -82,7 +83,24 @@ abstract contract TestHelpers is Test {
         return market.createCategory(
             2025,
             1,
+            0, // CAT_SINGLE
             BabyNameMarket.Gender.Male,
+            names,
+            block.timestamp + DEFAULT_DEADLINE_OFFSET
+        );
+    }
+
+    function _createTopNCategory(uint256 topN) internal returns (uint256) {
+        string[] memory names = new string[](3);
+        names[0] = "Olivia";
+        names[1] = "Emma";
+        names[2] = "Charlotte";
+
+        return market.createCategory(
+            2025,
+            topN,
+            3, // CAT_TOP_N
+            BabyNameMarket.Gender.Female,
             names,
             block.timestamp + DEFAULT_DEADLINE_OFFSET
         );

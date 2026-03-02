@@ -17,6 +17,7 @@ interface IBabyNameMarket {
         uint256 indexed categoryId,
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         uint256 deadline
     );
@@ -44,6 +45,14 @@ interface IBabyNameMarket {
         uint256 rake
     );
 
+    event CategoryResolvedTopN(
+        uint256 indexed categoryId,
+        uint256[] winningPoolIds,
+        uint256 totalCollateral,
+        uint256 prizePool,
+        uint256 rake
+    );
+
     event WinningsClaimed(
         uint256 indexed poolId,
         address indexed claimer,
@@ -58,6 +67,7 @@ interface IBabyNameMarket {
     function createCategory(
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         string[] calldata names,
         uint256 deadline
@@ -79,6 +89,8 @@ interface IBabyNameMarket {
     // ============ Resolution ============
 
     function resolve(uint256 categoryId, uint256 winningPoolId) external;
+
+    function resolveTopN(uint256 categoryId, uint256[] calldata winningPoolIds) external;
 
     function claim(uint256 poolId) external;
 
@@ -110,6 +122,7 @@ interface IBabyNameMarket {
     function getCategoryInfo(uint256 categoryId) external view returns (
         uint256 year,
         uint256 position,
+        uint8 categoryType,
         Gender gender,
         uint256 totalCollateral,
         uint256 poolCount,
@@ -118,6 +131,8 @@ interface IBabyNameMarket {
         uint256 prizePool,
         uint256 deadline
     );
+
+    function getWinningPoolIds(uint256 categoryId) external view returns (uint256[] memory);
 
     function getUserPosition(uint256 poolId, address user) external view returns (
         uint256 tokenBalance,
@@ -136,6 +151,10 @@ interface IBabyNameMarket {
     function HOUSE_RAKE_BPS() external view returns (uint256);
     function MIN_CATEGORY_COLLATERAL() external view returns (uint256);
     function MIN_BET() external view returns (uint256);
+    function CAT_SINGLE() external view returns (uint8);
+    function CAT_EXACTA() external view returns (uint8);
+    function CAT_TRIFECTA() external view returns (uint8);
+    function CAT_TOP_N() external view returns (uint8);
 
     // ============ Token Config ============
 

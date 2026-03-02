@@ -32,8 +32,8 @@ contract MultiCategoryTest is TestHelpers {
         _buyAs(alice, 4, 1e6);   // cat2 pool
 
         // Collateral is isolated per category (normalized to 18 decimals)
-        (, , , uint256 total1, , , , , ) = market.getCategoryInfo(1);
-        (, , , uint256 total2, , , , , ) = market.getCategoryInfo(2);
+        (, , , , uint256 total1, , , , , ) = market.getCategoryInfo(1);
+        (, , , , uint256 total2, , , , , ) = market.getCategoryInfo(2);
 
         assertEq(total1, 1 ether);
         assertEq(total2, 1 ether);
@@ -50,8 +50,8 @@ contract MultiCategoryTest is TestHelpers {
         vm.prank(resolver);
         market.resolve(1, 1);
 
-        (, , , , , bool resolved1, , , ) = market.getCategoryInfo(1);
-        (, , , , , bool resolved2, , , ) = market.getCategoryInfo(2);
+        (, , , , , , bool resolved1, , , ) = market.getCategoryInfo(1);
+        (, , , , , , bool resolved2, , , ) = market.getCategoryInfo(2);
 
         assertTrue(resolved1);
         assertFalse(resolved2);
@@ -63,7 +63,7 @@ contract MultiCategoryTest is TestHelpers {
     function test_MultipleCategoriesSequentialIds() public {
         for (uint256 i = 0; i < 5; i++) {
             string[] memory names = _twoNames();
-            market.createCategory(2025, i + 1, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+            market.createCategory(2025, i + 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
         }
 
         assertEq(market.nextCategoryId(), 6);

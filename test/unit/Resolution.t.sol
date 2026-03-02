@@ -13,7 +13,7 @@ contract ResolutionTest is TestHelpers {
         vm.prank(resolver);
         market.resolve(catId, 1);
 
-        (, , , uint256 totalCollateral, , bool resolved, uint256 winningPoolId, uint256 prizePool, ) =
+        (, , , , uint256 totalCollateral, , bool resolved, uint256 winningPoolId, uint256 prizePool, ) =
             market.getCategoryInfo(catId);
 
         assertTrue(resolved);
@@ -29,7 +29,7 @@ contract ResolutionTest is TestHelpers {
         vm.prank(resolver);
         market.resolve(catId, 1);
 
-        (, , , , , bool resolved, , uint256 prizePool, ) = market.getCategoryInfo(catId);
+        (, , , , , , bool resolved, , uint256 prizePool, ) = market.getCategoryInfo(catId);
         assertTrue(resolved);
         assertEq(prizePool, 0);
         assertEq(market.treasury(), 0);

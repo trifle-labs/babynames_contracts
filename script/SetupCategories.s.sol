@@ -33,6 +33,7 @@ contract SetupCategories is Script {
         uint256 girlsCategory = market.createCategory(
             2025,
             1,
+            0,
             BabyNameMarket.Gender.Female,
             girlsNames,
             deadline
@@ -55,6 +56,7 @@ contract SetupCategories is Script {
         uint256 boysCategory = market.createCategory(
             2025,
             1,
+            0,
             BabyNameMarket.Gender.Male,
             boysNames,
             deadline
