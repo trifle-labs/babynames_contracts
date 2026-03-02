@@ -20,28 +20,29 @@ contract SeedExactaTrifecta is Script {
         exactaGirls[0] = "Olivia / Emma";
         exactaGirls[1] = "Olivia / Amelia";
         exactaGirls[2] = "Emma / Olivia";
-        market.createCategory(2025, 12, 1, BabyNameMarket.Gender.Female, exactaGirls, deadline2025);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        market.createCategory(2025, 12, 1, BabyNameMarket.Gender.Female, exactaGirls, deadline2025, emptyProofs);
 
         // Exacta Boy
         string[] memory exactaBoys = new string[](3);
         exactaBoys[0] = "Liam / Noah";
         exactaBoys[1] = "Noah / Liam";
         exactaBoys[2] = "Liam / Oliver";
-        market.createCategory(2025, 12, 1, BabyNameMarket.Gender.Male, exactaBoys, deadline2025);
+        market.createCategory(2025, 12, 1, BabyNameMarket.Gender.Male, exactaBoys, deadline2025, emptyProofs);
 
         // Trifecta Girl
         string[] memory trifectaGirls = new string[](3);
         trifectaGirls[0] = "Olivia / Emma / Amelia";
         trifectaGirls[1] = "Olivia / Amelia / Emma";
         trifectaGirls[2] = "Emma / Olivia / Amelia";
-        market.createCategory(2025, 123, 2, BabyNameMarket.Gender.Female, trifectaGirls, deadline2025);
+        market.createCategory(2025, 123, 2, BabyNameMarket.Gender.Female, trifectaGirls, deadline2025, emptyProofs);
 
         // Trifecta Boy
         string[] memory trifectaBoys = new string[](3);
         trifectaBoys[0] = "Liam / Noah / Oliver";
         trifectaBoys[1] = "Noah / Liam / Oliver";
         trifectaBoys[2] = "Liam / Oliver / Noah";
-        market.createCategory(2025, 123, 2, BabyNameMarket.Gender.Male, trifectaBoys, deadline2025);
+        market.createCategory(2025, 123, 2, BabyNameMarket.Gender.Male, trifectaBoys, deadline2025, emptyProofs);
 
         vm.stopBroadcast();
 

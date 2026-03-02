@@ -63,7 +63,7 @@ contract MultiCategoryTest is TestHelpers {
     function test_MultipleCategoriesSequentialIds() public {
         for (uint256 i = 0; i < 5; i++) {
             string[] memory names = _twoNames();
-            market.createCategory(2025, i + 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+            market.createCategory(2025, i + 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
         }
 
         assertEq(market.nextCategoryId(), 6);

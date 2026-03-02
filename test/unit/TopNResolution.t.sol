@@ -247,7 +247,7 @@ contract TopNResolutionTest is TestHelpers {
         names[4] = "Mia";
 
         uint256 bigCat = market.createCategory(
-            2025, 3, 3, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days
+            2025, 3, 3, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs()
         );
 
         uint256[] memory poolIds = market.getCategoryPools(bigCat);

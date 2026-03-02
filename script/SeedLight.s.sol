@@ -58,6 +58,7 @@ contract SeedLight is Script {
         for (uint256 i = 0; i < 10; i++) {
             nameList[i] = names[i];
         }
-        market.createCategory(year, position, 0, gender, nameList, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        market.createCategory(year, position, 0, gender, nameList, deadline, emptyProofs);
     }
 }

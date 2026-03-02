@@ -12,7 +12,7 @@ contract FullFlowTest is TestHelpers {
         names[3] = "Sophia";
 
         uint256 catId = market.createCategory(
-            2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days
+            2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs()
         );
 
         // Balanced bets to avoid pool-full

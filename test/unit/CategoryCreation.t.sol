@@ -13,7 +13,7 @@ contract CategoryCreationTest is TestHelpers {
         uint256 deadline = block.timestamp + 30 days;
 
         uint256 categoryId = market.createCategory(
-            2025, 1, 0, BabyNameMarket.Gender.Female, names, deadline
+            2025, 1, 0, BabyNameMarket.Gender.Female, names, deadline, _emptyProofs()
         );
 
         assertEq(categoryId, 1);
@@ -49,7 +49,7 @@ contract CategoryCreationTest is TestHelpers {
         vm.expectEmit(true, false, false, true);
         emit CategoryCreated(1, 2025, 5, 0, BabyNameMarket.Gender.Male, block.timestamp + 30 days);
 
-        market.createCategory(2025, 5, 0, BabyNameMarket.Gender.Male, names, block.timestamp + 30 days);
+        market.createCategory(2025, 5, 0, BabyNameMarket.Gender.Male, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_CreateCategory_PoolsCreated() public {
@@ -67,11 +67,11 @@ contract CategoryCreationTest is TestHelpers {
         string[] memory names = _twoNames();
 
         // Position 1 (min)
-        uint256 cat1 = market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        uint256 cat1 = market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
         assertEq(cat1, 1);
 
         // Position 1000 (max)
-        uint256 cat2 = market.createCategory(2025, 1000, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        uint256 cat2 = market.createCategory(2025, 1000, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
         assertEq(cat2, 2);
     }
 
@@ -98,7 +98,7 @@ contract CategoryCreationTest is TestHelpers {
     function test_AddNameToCategory() public {
         uint256 catId = _createTestCategory();
 
-        uint256 poolId = market.addNameToCategory(catId, "Sophia");
+        uint256 poolId = market.addNameToCategory(catId, "Sophia", _emptyProof());
 
         uint256[] memory poolIds = market.getCategoryPools(catId);
         assertEq(poolIds.length, 4);
@@ -111,42 +111,42 @@ contract CategoryCreationTest is TestHelpers {
         names[0] = "Olivia";
 
         vm.expectRevert(BabyNameMarket.MinTwoOptions.selector);
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_ZeroNames() public {
         string[] memory names = new string[](0);
 
         vm.expectRevert(BabyNameMarket.MinTwoOptions.selector);
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_InvalidPosition_Zero() public {
         string[] memory names = _twoNames();
 
         vm.expectRevert(BabyNameMarket.InvalidPosition.selector);
-        market.createCategory(2025, 0, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 0, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_InvalidPosition_Above1000() public {
         string[] memory names = _twoNames();
 
         vm.expectRevert(BabyNameMarket.InvalidPosition.selector);
-        market.createCategory(2025, 1001, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1001, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_InvalidCategoryType() public {
         string[] memory names = _twoNames();
 
         vm.expectRevert(BabyNameMarket.InvalidCategoryType.selector);
-        market.createCategory(2025, 1, 4, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 4, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_InvalidDeadline() public {
         string[] memory names = _twoNames();
 
         vm.expectRevert(BabyNameMarket.InvalidDeadline.selector);
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp, _emptyProofs());
     }
 
     function test_RevertWhen_AddNamePostDeadline() public {
@@ -155,12 +155,12 @@ contract CategoryCreationTest is TestHelpers {
         vm.warp(block.timestamp + 31 days);
 
         vm.expectRevert(BabyNameMarket.BettingClosed.selector);
-        market.addNameToCategory(catId, "Sophia");
+        market.addNameToCategory(catId, "Sophia", _emptyProof());
     }
 
     function test_RevertWhen_AddNameInvalidCategory() public {
         vm.expectRevert(BabyNameMarket.InvalidCategory.selector);
-        market.addNameToCategory(999, "Sophia");
+        market.addNameToCategory(999, "Sophia", _emptyProof());
     }
 
     function test_RevertWhen_AddNameToResolvedCategory() public {
@@ -172,7 +172,7 @@ contract CategoryCreationTest is TestHelpers {
         market.resolve(catId, 1);
 
         vm.expectRevert(BabyNameMarket.CategoryAlreadyResolved.selector);
-        market.addNameToCategory(catId, "Sophia");
+        market.addNameToCategory(catId, "Sophia", _emptyProof());
     }
 
     function test_RevertWhen_CreateCategoryPaused() public {
@@ -181,6 +181,6 @@ contract CategoryCreationTest is TestHelpers {
 
         string[] memory names = _twoNames();
         vm.expectRevert();
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 }

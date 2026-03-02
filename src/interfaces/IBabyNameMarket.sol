@@ -61,6 +61,8 @@ interface IBabyNameMarket {
     );
 
     event PoolSubsidized(uint256 indexed poolId, uint256 amount);
+    event NamesMerkleRootUpdated(bytes32 oldRoot, bytes32 newRoot);
+    event NameManuallyApproved(string name);
 
     // ============ Category Management ============
 
@@ -70,12 +72,14 @@ interface IBabyNameMarket {
         uint8 categoryType,
         Gender gender,
         string[] calldata names,
-        uint256 deadline
+        uint256 deadline,
+        bytes32[][] calldata proofs
     ) external returns (uint256 categoryId);
 
     function addNameToCategory(
         uint256 categoryId,
-        string calldata name
+        string calldata name,
+        bytes32[] calldata proof
     ) external returns (uint256 poolId);
 
     // ============ Trading ============
@@ -161,10 +165,17 @@ interface IBabyNameMarket {
     function collateralToken() external view returns (IERC20);
     function tokenDecimals() external view returns (uint8);
 
+    // ============ Admin ============
+
+    function setNamesMerkleRoot(bytes32 root) external;
+    function approveNameManually(string calldata name) external;
+
     // ============ State ============
 
     function treasury() external view returns (uint256);
     function resolver() external view returns (address);
+    function namesMerkleRoot() external view returns (bytes32);
+    function approvedNames(bytes32 nameHash) external view returns (bool);
     function nextPoolId() external view returns (uint256);
     function nextCategoryId() external view returns (uint256);
     function balances(uint256 poolId, address user) external view returns (uint256);

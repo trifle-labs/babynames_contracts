@@ -67,7 +67,8 @@ contract SeedExpanded is Script {
         for (uint256 i = 0; i < 10; i++) {
             nameList[i] = names[i];
         }
-        market.createCategory(year, position, 0, gender, nameList, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        market.createCategory(year, position, 0, gender, nameList, deadline, emptyProofs);
     }
 
     function _createExacta(
@@ -81,14 +82,16 @@ contract SeedExpanded is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1]);
         firstTwo[1] = string.concat(names[0], " / ", names[2]);
-        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        bytes32[] memory emptyProof = new bytes32[](0);
+        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline, emptyProofs);
 
         for (uint256 i = 0; i < 10; i++) {
             for (uint256 j = 0; j < 10; j++) {
                 if (i == j) continue;
                 if (i == 0 && j == 1) continue;
                 if (i == 0 && j == 2) continue;
-                market.addNameToCategory(catId, string.concat(names[i], " / ", names[j]));
+                market.addNameToCategory(catId, string.concat(names[i], " / ", names[j]), emptyProof);
             }
         }
     }

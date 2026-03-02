@@ -29,6 +29,7 @@ contract SetupCategories is Script {
         girlsNames[9] = "Luna";
 
         uint256 deadline = block.timestamp + config.deadlineOffset;
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
 
         uint256 girlsCategory = market.createCategory(
             2025,
@@ -36,7 +37,8 @@ contract SetupCategories is Script {
             0,
             BabyNameMarket.Gender.Female,
             girlsNames,
-            deadline
+            deadline,
+            emptyProofs
         );
         console.log("Girls #1 2025 category:", girlsCategory);
 
@@ -59,7 +61,8 @@ contract SetupCategories is Script {
             0,
             BabyNameMarket.Gender.Male,
             boysNames,
-            deadline
+            deadline,
+            emptyProofs
         );
         console.log("Boys #1 2025 category:", boysCategory);
 

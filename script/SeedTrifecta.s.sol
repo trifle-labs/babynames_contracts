@@ -47,7 +47,9 @@ contract SeedTrifecta is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1], " / ", names[2]);
         firstTwo[1] = string.concat(names[0], " / ", names[1], " / ", names[3]);
-        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        bytes32[] memory emptyProof = new bytes32[](0);
+        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline, emptyProofs);
 
         console.log("Created trifecta category:", catId);
 
@@ -61,7 +63,7 @@ contract SeedTrifecta is Script {
                     if (i == 0 && j == 1 && k == 2) continue;
                     if (i == 0 && j == 1 && k == 3) continue;
 
-                    market.addNameToCategory(catId, string.concat(names[i], " / ", names[j], " / ", names[k]));
+                    market.addNameToCategory(catId, string.concat(names[i], " / ", names[j], " / ", names[k]), emptyProof);
                     count++;
                 }
             }

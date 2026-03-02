@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
  * @title BabyNameMarket
@@ -107,6 +108,12 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     /// @notice Address authorized to resolve markets
     address public resolver;
 
+    /// @notice Merkle root of valid SSA names (0 = no whitelist enforced)
+    bytes32 public namesMerkleRoot;
+
+    /// @notice Names manually approved by owner (keccak256(lowercased) => true)
+    mapping(bytes32 => bool) public approvedNames;
+
     // ============ Events ============
 
     event CategoryCreated(
@@ -159,6 +166,8 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     event TreasuryWithdrawn(address indexed to, uint256 amount);
     event ResolverUpdated(address indexed oldResolver, address indexed newResolver);
     event PoolSubsidized(uint256 indexed poolId, uint256 amount);
+    event NamesMerkleRootUpdated(bytes32 oldRoot, bytes32 newRoot);
+    event NameManuallyApproved(string name);
 
     // ============ Errors ============
 
@@ -184,6 +193,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     error EmptyWinners();
     error DuplicateWinner();
     error TooManyWinners();
+    error InvalidNameProof();
 
     // ============ Constructor ============
 
@@ -251,6 +261,25 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    /**
+     * @notice Set the merkle root for valid SSA names
+     * @param root The new merkle root (0 to disable whitelist)
+     */
+    function setNamesMerkleRoot(bytes32 root) external onlyOwner {
+        emit NamesMerkleRootUpdated(namesMerkleRoot, root);
+        namesMerkleRoot = root;
+    }
+
+    /**
+     * @notice Manually approve a name (bypasses merkle check)
+     * @param name The name to approve (will be lowercased internally)
+     */
+    function approveNameManually(string calldata name) external onlyOwner {
+        bytes32 hash = keccak256(bytes(_toLowerCase(name)));
+        approvedNames[hash] = true;
+        emit NameManuallyApproved(name);
+    }
+
     // ============ Category Management ============
 
     /**
@@ -261,6 +290,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
      * @param gender Male or Female
      * @param names Initial pool names (minimum 2)
      * @param deadline Timestamp when betting closes
+     * @param proofs Merkle proofs for each name (only checked for single/topN types)
      */
     function createCategory(
         uint256 year,
@@ -268,12 +298,21 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint8 categoryType,
         Gender gender,
         string[] calldata names,
-        uint256 deadline
+        uint256 deadline,
+        bytes32[][] calldata proofs
     ) external whenNotPaused returns (uint256 categoryId) {
         if (names.length < 2) revert MinTwoOptions();
         if (categoryType > CAT_TOP_N) revert InvalidCategoryType();
         if (position < 1 || position > 1000) revert InvalidPosition();
         if (deadline <= block.timestamp) revert InvalidDeadline();
+
+        // Validate names for single and topN categories
+        if (categoryType == CAT_SINGLE || categoryType == CAT_TOP_N) {
+            for (uint256 i = 0; i < names.length; i++) {
+                bytes32[] memory emptyProof = new bytes32[](0);
+                if (!_isValidName(names[i], i < proofs.length ? proofs[i] : emptyProof)) revert InvalidNameProof();
+            }
+        }
 
         categoryId = nextCategoryId++;
 
@@ -295,15 +334,22 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
      * @notice Add a new name option to an existing category
      * @param categoryId The category to add to
      * @param name The name to add as a betting option
+     * @param proof Merkle proof for the name (only checked for single/topN types)
      */
     function addNameToCategory(
         uint256 categoryId,
-        string calldata name
+        string calldata name,
+        bytes32[] calldata proof
     ) external whenNotPaused returns (uint256 poolId) {
         if (categoryId >= nextCategoryId) revert InvalidCategory();
         Category storage cat = categories[categoryId];
         if (cat.resolved) revert CategoryAlreadyResolved();
         if (block.timestamp >= cat.deadline) revert BettingClosed();
+
+        // Validate name for single and topN categories
+        if (cat.categoryType == CAT_SINGLE || cat.categoryType == CAT_TOP_N) {
+            if (!_isValidName(name, proof)) revert InvalidNameProof();
+        }
 
         poolId = _createPool(categoryId, name);
     }
@@ -324,6 +370,44 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         categories[categoryId].poolIds.push(poolId);
 
         emit PoolCreated(poolId, categoryId, name);
+    }
+
+    // ============ Name Validation ============
+
+    /**
+     * @notice Check if a name is valid (approved or in merkle tree)
+     * @param name The name to validate
+     * @param proof The merkle proof
+     * @return true if valid
+     */
+    function _isValidName(string calldata name, bytes32[] memory proof) internal view returns (bool) {
+        // No whitelist set = all names allowed
+        if (namesMerkleRoot == bytes32(0)) return true;
+
+        string memory lowered = _toLowerCase(name);
+        bytes32 nameHash = keccak256(bytes(lowered));
+
+        // Check manual approval
+        if (approvedNames[nameHash]) return true;
+
+        // Check merkle proof (double-hash leaf format matches OZ StandardMerkleTree)
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(lowered))));
+        return MerkleProof.verify(proof, namesMerkleRoot, leaf);
+    }
+
+    /**
+     * @notice Convert a string to lowercase
+     * @param str The input string
+     * @return The lowercased string
+     */
+    function _toLowerCase(string memory str) internal pure returns (string memory) {
+        bytes memory b = bytes(str);
+        for (uint256 i = 0; i < b.length; i++) {
+            if (b[i] >= 0x41 && b[i] <= 0x5A) {
+                b[i] = bytes1(uint8(b[i]) + 32);
+            }
+        }
+        return string(b);
     }
 
     // ============ Trading ============

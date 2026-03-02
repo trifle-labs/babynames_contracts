@@ -39,13 +39,15 @@ contract SeedTopN is Script {
 
         vm.startBroadcast(deployerKey);
 
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+
         // Top 3 categories
-        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Female, girls, deadline2025);
-        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Male, boys, deadline2025);
+        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Female, girls, deadline2025, emptyProofs);
+        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Male, boys, deadline2025, emptyProofs);
 
         // Top 10 categories
-        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Female, girls, deadline2025);
-        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Male, boys, deadline2025);
+        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Female, girls, deadline2025, emptyProofs);
+        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Male, boys, deadline2025, emptyProofs);
 
         vm.stopBroadcast();
 

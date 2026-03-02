@@ -47,12 +47,12 @@ contract AdminTest is TestHelpers {
 
         string[] memory names = _twoNames();
         vm.expectRevert();
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
 
         vm.prank(owner);
         market.unpause();
 
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days);
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
     function test_RevertWhen_NonOwnerWithdrawTreasury() public {

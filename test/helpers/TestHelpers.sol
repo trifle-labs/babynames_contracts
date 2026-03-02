@@ -58,6 +58,14 @@ abstract contract TestHelpers is Test {
         token.approve(address(market), type(uint256).max);
     }
 
+    function _emptyProofs() internal pure returns (bytes32[][] memory) {
+        return new bytes32[][](0);
+    }
+
+    function _emptyProof() internal pure returns (bytes32[] memory) {
+        return new bytes32[](0);
+    }
+
     function _createTestCategory() internal returns (uint256) {
         string[] memory names = new string[](3);
         names[0] = "Olivia";
@@ -70,7 +78,8 @@ abstract contract TestHelpers is Test {
             0, // CAT_SINGLE
             BabyNameMarket.Gender.Female,
             names,
-            block.timestamp + DEFAULT_DEADLINE_OFFSET
+            block.timestamp + DEFAULT_DEADLINE_OFFSET,
+            _emptyProofs()
         );
     }
 
@@ -86,7 +95,8 @@ abstract contract TestHelpers is Test {
             0, // CAT_SINGLE
             BabyNameMarket.Gender.Male,
             names,
-            block.timestamp + DEFAULT_DEADLINE_OFFSET
+            block.timestamp + DEFAULT_DEADLINE_OFFSET,
+            _emptyProofs()
         );
     }
 
@@ -102,7 +112,8 @@ abstract contract TestHelpers is Test {
             3, // CAT_TOP_N
             BabyNameMarket.Gender.Female,
             names,
-            block.timestamp + DEFAULT_DEADLINE_OFFSET
+            block.timestamp + DEFAULT_DEADLINE_OFFSET,
+            _emptyProofs()
         );
     }
 

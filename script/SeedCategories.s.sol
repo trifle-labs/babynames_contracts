@@ -101,7 +101,8 @@ contract SeedCategories is Script {
         for (uint256 i = 0; i < 10; i++) {
             nameList[i] = names[i];
         }
-        market.createCategory(year, position, 0, gender, nameList, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        market.createCategory(year, position, 0, gender, nameList, deadline, emptyProofs);
     }
 
     function _createExactaCategory(
@@ -116,7 +117,9 @@ contract SeedCategories is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1]);
         firstTwo[1] = string.concat(names[0], " / ", names[2]);
-        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline);
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
+        bytes32[] memory emptyProof = new bytes32[](0);
+        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline, emptyProofs);
 
         // Add remaining 88 pairs
         for (uint256 i = 0; i < 10; i++) {
@@ -127,7 +130,7 @@ contract SeedCategories is Script {
                 if (i == 0 && j == 2) continue;
 
                 string memory pairName = string.concat(names[i], " / ", names[j]);
-                market.addNameToCategory(catId, pairName);
+                market.addNameToCategory(catId, pairName, emptyProof);
             }
         }
     }
@@ -144,7 +147,9 @@ contract SeedCategories is Script {
         string[] memory firstTwo = new string[](2);
         firstTwo[0] = string.concat(names[0], " / ", names[1], " / ", names[2]);
         firstTwo[1] = string.concat(names[0], " / ", names[1], " / ", names[3]);
-        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline);
+        bytes32[][] memory emptyProofs2 = new bytes32[][](0);
+        bytes32[] memory emptyProof2 = new bytes32[](0);
+        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline, emptyProofs2);
 
         // Add remaining 718 triples
         for (uint256 i = 0; i < 10; i++) {
@@ -157,7 +162,7 @@ contract SeedCategories is Script {
                     if (i == 0 && j == 1 && k == 3) continue;
 
                     string memory triName = string.concat(names[i], " / ", names[j], " / ", names[k]);
-                    market.addNameToCategory(catId, triName);
+                    market.addNameToCategory(catId, triName, emptyProof2);
                 }
             }
         }
