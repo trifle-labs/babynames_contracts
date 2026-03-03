@@ -82,6 +82,13 @@ interface IBabyNameMarket {
         bytes32[] calldata proof
     ) external returns (uint256 poolId);
 
+    function addNameAndBuy(
+        uint256 categoryId,
+        string calldata name,
+        bytes32[] calldata proof,
+        uint256 amount
+    ) external returns (uint256 poolId);
+
     // ============ Trading ============
 
     function buy(uint256 poolId, uint256 amount) external;

@@ -106,18 +106,22 @@ contract CategoryCreationTest is TestHelpers {
         assertEq(name, "Sophia");
     }
 
-    function test_RevertWhen_LessThanTwoNames() public {
+    function test_CreateCategory_OneName() public {
         string[] memory names = new string[](1);
         names[0] = "Olivia";
 
-        vm.expectRevert(BabyNameMarket.MinTwoOptions.selector);
-        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
+        uint256 catId = market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
+        uint256[] memory poolIds = market.getCategoryPools(catId);
+        assertEq(poolIds.length, 1);
+
+        (, string memory name0, , , ) = market.getPoolInfo(poolIds[0]);
+        assertEq(name0, "Olivia");
     }
 
     function test_RevertWhen_ZeroNames() public {
         string[] memory names = new string[](0);
 
-        vm.expectRevert(BabyNameMarket.MinTwoOptions.selector);
+        vm.expectRevert(BabyNameMarket.MinOneOption.selector);
         market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
     }
 
@@ -182,5 +186,62 @@ contract CategoryCreationTest is TestHelpers {
         string[] memory names = _twoNames();
         vm.expectRevert();
         market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs());
+    }
+
+    // ============ addNameAndBuy ============
+
+    function test_AddNameAndBuy() public {
+        uint256 catId = _createTestCategory();
+
+        vm.prank(alice);
+        uint256 poolId = market.addNameAndBuy(catId, "Sophia", _emptyProof(), 1e6);
+
+        // Pool was created
+        uint256[] memory poolIds = market.getCategoryPools(catId);
+        assertEq(poolIds.length, 4);
+        (, string memory name, , , ) = market.getPoolInfo(poolId);
+        assertEq(name, "Sophia");
+
+        // Bet was placed
+        uint256 bal = market.balances(poolId, alice);
+        assertGt(bal, 0);
+    }
+
+    function test_AddNameAndBuy_ZeroAmount() public {
+        uint256 catId = _createTestCategory();
+
+        vm.prank(alice);
+        uint256 poolId = market.addNameAndBuy(catId, "Sophia", _emptyProof(), 0);
+
+        // Pool was created but no bet
+        (, string memory name, , , ) = market.getPoolInfo(poolId);
+        assertEq(name, "Sophia");
+        assertEq(market.balances(poolId, alice), 0);
+    }
+
+    function test_RevertWhen_AddNameAndBuy_InvalidCategory() public {
+        vm.prank(alice);
+        vm.expectRevert(BabyNameMarket.InvalidCategory.selector);
+        market.addNameAndBuy(999, "Sophia", _emptyProof(), 1e6);
+    }
+
+    function test_RevertWhen_AddNameAndBuy_Resolved() public {
+        uint256 catId = _createTestCategory();
+        _buyAs(alice, 1, 1e6);
+        vm.prank(resolver);
+        market.resolve(catId, 1);
+
+        vm.prank(alice);
+        vm.expectRevert(BabyNameMarket.CategoryAlreadyResolved.selector);
+        market.addNameAndBuy(catId, "Sophia", _emptyProof(), 1e6);
+    }
+
+    function test_RevertWhen_AddNameAndBuy_PostDeadline() public {
+        uint256 catId = _createTestCategory();
+        vm.warp(block.timestamp + 31 days);
+
+        vm.prank(alice);
+        vm.expectRevert(BabyNameMarket.BettingClosed.selector);
+        market.addNameAndBuy(catId, "Sophia", _emptyProof(), 1e6);
     }
 }

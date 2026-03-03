@@ -182,7 +182,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     error AlreadyClaimed();
     error NoBalance();
     error NotResolver();
-    error MinTwoOptions();
+    error MinOneOption();
     error InvalidPosition();
     error InvalidDeadline();
     error TransferFailed();
@@ -301,7 +301,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 deadline,
         bytes32[][] calldata proofs
     ) external whenNotPaused returns (uint256 categoryId) {
-        if (names.length < 2) revert MinTwoOptions();
+        if (names.length < 1) revert MinOneOption();
         if (categoryType > CAT_TOP_N) revert InvalidCategoryType();
         if (position < 1 || position > 1000) revert InvalidPosition();
         if (deadline <= block.timestamp) revert InvalidDeadline();
@@ -352,6 +352,60 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         }
 
         poolId = _createPool(categoryId, name);
+    }
+
+    /**
+     * @notice Add a new name and place a bet in a single transaction
+     * @param categoryId The category to add to
+     * @param name The name to add as a betting option
+     * @param proof Merkle proof for the name (only checked for single/topN types)
+     * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
+     */
+    function addNameAndBuy(
+        uint256 categoryId,
+        string calldata name,
+        bytes32[] calldata proof,
+        uint256 amount
+    ) external nonReentrant whenNotPaused returns (uint256 poolId) {
+        if (categoryId >= nextCategoryId) revert InvalidCategory();
+        Category storage cat = categories[categoryId];
+        if (cat.resolved) revert CategoryAlreadyResolved();
+        if (block.timestamp >= cat.deadline) revert BettingClosed();
+
+        // Validate name for single and topN categories
+        if (cat.categoryType == CAT_SINGLE || cat.categoryType == CAT_TOP_N) {
+            if (!_isValidName(name, proof)) revert InvalidNameProof();
+        }
+
+        poolId = _createPool(categoryId, name);
+
+        // Place bet if amount > 0
+        if (amount > 0) {
+            uint256 normalizedAmount = _normalize(amount);
+            if (normalizedAmount < MIN_BET) revert InsufficientBet();
+
+            // Check pool-full condition (only after minimum threshold)
+            if (cat.totalCollateral >= MIN_CATEGORY_COLLATERAL) {
+                if (!_canBuy(poolId, normalizedAmount)) revert PoolOversubscribed();
+            }
+
+            // Transfer tokens from buyer
+            collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+
+            // Calculate tokens for normalized amount
+            uint256 tokens = _calculateTokensForEth(pools[poolId].totalSupply, normalizedAmount);
+            if (tokens == 0) revert InsufficientBet();
+
+            uint256 avgPrice = normalizedAmount * PRECISION / tokens;
+
+            // Update state
+            pools[poolId].totalSupply += tokens;
+            pools[poolId].collateral += normalizedAmount;
+            cat.totalCollateral += normalizedAmount;
+            balances[poolId][msg.sender] += tokens;
+
+            emit TokensPurchased(poolId, msg.sender, tokens, normalizedAmount, avgPrice);
+        }
     }
 
     function _createPool(
