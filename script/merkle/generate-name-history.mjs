@@ -159,6 +159,36 @@ const timeSeriesGirls = buildTimeSeries(topGirlNames, "F");
 
 console.log(`Time series: top ${TIMESERIES_TOP_N} per gender across ${allYears.length} years`);
 
+// === 4. Search index: all names in top 1000 of any recent year, with year-by-year ranks ===
+const SEARCH_TOP_N = 1000;
+
+function buildSearchIndex(gender, genderKey) {
+  // Collect all unique names that appear in top 1000 of any recent year
+  const nameSet = new Set();
+  for (const year of recentYears) {
+    const entries = yearData[year][gender].slice(0, SEARCH_TOP_N);
+    for (const { name } of entries) {
+      nameSet.add(name);
+    }
+  }
+
+  // For each name, store rank per recent year (null if outside top 1000)
+  const index = [];
+  for (const name of [...nameSet].sort()) {
+    const ranks = recentYears.map((year) => {
+      const idx = yearData[year][gender].findIndex((e) => e.name === name);
+      return idx >= 0 && idx < SEARCH_TOP_N ? idx + 1 : null;
+    });
+    index.push({ name, ranks });
+  }
+  return index;
+}
+
+const searchBoys = buildSearchIndex("M", "boys");
+const searchGirls = buildSearchIndex("F", "girls");
+
+console.log(`Search index: ${searchBoys.length} boy names, ${searchGirls.length} girl names (top ${SEARCH_TOP_N})`);
+
 // === Build output ===
 const output = {
   generatedAt: new Date().toISOString(),
@@ -177,6 +207,11 @@ const output = {
     years: allYears,
     boys: timeSeriesBoys,
     girls: timeSeriesGirls,
+  },
+  search: {
+    years: recentYears,
+    boys: searchBoys,
+    girls: searchGirls,
   },
 };
 
