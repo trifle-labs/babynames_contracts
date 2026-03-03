@@ -8,10 +8,19 @@ Users bet on which baby names will top the Social Security Administration's annu
 
 ```
 1. Categories are created   →  "Which name will be #1 Girl in 2025?"
-2. Users buy tokens          →  Pick a name, pay ETH, get tokens via bonding curve
+2. Users buy tokens          →  Pick a name, pay USDC (ERC20), get tokens via bonding curve
 3. Resolver declares winner  →  SSA data comes out, winning pool is set
 4. Winners claim payouts     →  Pro-rata share of 90% of total collateral
 ```
+
+### Category Types
+
+| Type | Constant | Description |
+|------|----------|-------------|
+| Single | `CAT_SINGLE` (0) | Predict the name at one specific rank |
+| Exacta | `CAT_EXACTA` (1) | Predict names at two specific ranks (ordered) |
+| Trifecta | `CAT_TRIFECTA` (2) | Predict names at three specific ranks (ordered) |
+| Top-N | `CAT_TOP_N` (3) | Predict names that appear anywhere in the top N |
 
 ### Price Curve
 
@@ -32,10 +41,11 @@ Prices start near zero and asymptotically approach $1. A "pool full" mechanism p
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `CEILING` | $1.00 | Maximum token price |
+| `CEILING` | 1.00 USDC | Maximum token price |
 | `K` | 50,000 | Curve softness |
 | `HOUSE_RAKE_BPS` | 1000 | 10% rake from prize pool |
-| `MIN_BET` | 0.001 ETH | Minimum bet |
+| `MIN_CATEGORY_COLLATERAL` | 0.1 USDC | Minimum category collateral before pool-full cap |
+| `MIN_BET` | 0.001 USDC | Minimum bet amount |
 
 ## Quick Start
 
@@ -58,17 +68,26 @@ forge test
 
 ```solidity
 // Check available pools
-(year, position, gender, totalCollateral, poolCount, resolved, , , deadline)
+(year, position, categoryType, gender, totalCollateral, poolCount, resolved, winningPoolId, prizePool, deadline)
     = market.getCategoryInfo(categoryId);
 
 uint256[] memory poolIds = market.getCategoryPools(categoryId);
 (categoryId, name, totalSupply, collateral, currentPrice) = market.getPoolInfo(poolId);
 
-// Simulate before buying
-(tokens, avgPrice, expectedRedemption, profitIfWins) = market.simulateBuy(poolId, 0.5 ether);
+// Simulate before buying (amount in token's native decimals, e.g. 1_000_000 for 1 USDC)
+(tokens, avgPrice, expectedRedemption, profitIfWins) = market.simulateBuy(poolId, 1_000_000);
 
-// Buy tokens
-market.buy{value: 0.5 ether}(poolId);
+// Approve and buy tokens
+collateralToken.approve(address(market), 1_000_000);
+market.buy(poolId, 1_000_000);
+```
+
+### Add a Name and Buy in One Step
+
+```solidity
+// Create a pool for a name and immediately buy tokens
+collateralToken.approve(address(market), 1_000_000);
+market.addNameAndBuy(categoryId, "Olivia", merkleProof, 1_000_000);
 ```
 
 ### Claim Winnings
@@ -83,6 +102,7 @@ market.claim(winningPoolId);
 ```bash
 # Copy and fill in environment variables
 cp .env.example .env
+# Set PRIVATE_KEY, RESOLVER_ADDRESS, TOKEN_ADDRESS (e.g. USDC address), and RPC URLs
 
 # Deploy to Base Sepolia (testnet)
 make deploy-base-sepolia
@@ -101,7 +121,7 @@ Supported chains: ETH Mainnet, Sepolia, Base, Base Sepolia. All deployments auto
 
 ```bash
 forge build              # Compile
-forge test               # Run 91 tests (unit, integration, fuzz, edge)
+forge test               # Run 123 tests (unit, integration, fuzz, edge)
 forge test -vvv          # Verbose output
 forge coverage           # Coverage report (>88% branch coverage on src/)
 forge snapshot           # Gas snapshot
@@ -114,7 +134,7 @@ make deploy-local        # Deploy to local anvil
 
 ```
 test/
-├── unit/          6 files — category creation, buying, resolution, admin, curve math, views
+├── unit/          8 files — category creation, buying, resolution, admin, curve math, views, merkle whitelist, top-N resolution
 ├── integration/   2 files — full flow, multi-category
 ├── fuzz/          3 files — randomized buy amounts, math invariants, resolution payouts
 ├── edge/          3 files — pool-full boundary, overflow, reentrancy attack
@@ -143,7 +163,15 @@ src/
 
 script/
 ├── Deploy.s.sol                    Deployment script (writes deployments/<chainId>.json)
+├── DeployTestnet.s.sol             Testnet deployment with mock token setup
 ├── SetupCategories.s.sol           Creates initial girl + boy name categories
+├── SeedCategories.s.sol            Seed categories with names
+├── SeedTopN.s.sol                  Seed top-N categories
+├── SeedTrifecta.s.sol              Seed trifecta categories
+├── SeedExactaTrifecta.s.sol        Seed exacta/trifecta combined categories
+├── SeedExpanded.s.sol              Expanded name seeding
+├── SeedLight.s.sol                 Lightweight category seeding
+├── SetMerkleRoot.s.sol             Update the names Merkle root on-chain
 └── helpers/ChainConfig.sol         Per-chain resolver and deadline config
 ```
 
@@ -153,6 +181,7 @@ script/
 - **Pausable** emergency stop
 - **Buy-only** until resolution (no selling prevents manipulation)
 - **Pool-full mechanism** prevents guaranteed-loss purchases
+- **Merkle name whitelist** restricts pools to SSA-verified names (configurable; names can also be manually approved by owner)
 - **Resolver trust**: currently a trusted address; future work includes ZK verification of SSA data
 
 ## Docs
