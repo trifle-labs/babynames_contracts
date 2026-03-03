@@ -189,6 +189,58 @@ const searchGirls = buildSearchIndex("F", "girls");
 
 console.log(`Search index: ${searchBoys.length} boy names, ${searchGirls.length} girl names (top ${SEARCH_TOP_N})`);
 
+// === 5. All-names summary: every name that ever appeared, with best rank + current rank ===
+// This lets search find ANY name, even if it's not in the top-1000 detailed index.
+function buildAllNamesSummary(gender) {
+  const searchNames = new Set(
+    gender === "M" ? searchBoys.map((e) => e.name) : searchGirls.map((e) => e.name)
+  );
+
+  // For every name across all years, track best rank + year and latest rank
+  const nameStats = {};
+
+  for (const year of allYears) {
+    const entries = yearData[year][gender];
+    for (let i = 0; i < entries.length; i++) {
+      const { name, count } = entries[i];
+      if (searchNames.has(name)) continue; // already in detailed index
+
+      const rank = i + 1;
+      if (!nameStats[name]) {
+        nameStats[name] = { best: rank, year, current: null, count: 0 };
+      }
+      if (rank < nameStats[name].best) {
+        nameStats[name].best = rank;
+        nameStats[name].year = year;
+      }
+      // Track latest year
+      if (year === maxYear) {
+        nameStats[name].current = rank;
+        nameStats[name].count = count;
+      }
+    }
+  }
+
+  // Convert to sorted array (by best rank), only include names that reached top 5000
+  const ALL_NAMES_CUTOFF = 5000;
+  return Object.entries(nameStats)
+    .filter(([, s]) => s.best <= ALL_NAMES_CUTOFF)
+    .map(([name, s]) => {
+      const entry = { n: name, b: s.best, y: s.year };
+      if (s.current !== null) {
+        entry.c = s.current;
+        entry.k = s.count;
+      }
+      return entry;
+    })
+    .sort((a, b) => a.b - b.b);
+}
+
+const allBoys = buildAllNamesSummary("M");
+const allGirls = buildAllNamesSummary("F");
+
+console.log(`All-names summary: ${allBoys.length} additional boy names, ${allGirls.length} additional girl names`);
+
 // === Build output ===
 const output = {
   generatedAt: new Date().toISOString(),
@@ -212,6 +264,10 @@ const output = {
     years: recentYears,
     boys: searchBoys,
     girls: searchGirls,
+  },
+  allNames: {
+    boys: allBoys,
+    girls: allGirls,
   },
 };
 
