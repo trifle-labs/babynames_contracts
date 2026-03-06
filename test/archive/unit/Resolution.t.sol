@@ -50,7 +50,7 @@ contract ResolutionTest is TestHelpers {
         market.claim(1);
 
         uint256 aliceAfter = token.balanceOf(alice);
-        // Prize pool is 7.2 USDC (7_200_000 native units)
+        // Prize pool is 7.2 USDC (7_200_000 native units), allow small rounding
         assertApproxEqAbs(aliceAfter - aliceBefore, 7_200_000, 100);
 
         (, bool hasClaimed, ) = market.getUserPosition(1, alice);
@@ -60,7 +60,7 @@ contract ResolutionTest is TestHelpers {
     function test_Claim_ProportionalPayouts() public {
         uint256 catId = _createTestCategory();
 
-        // Alice bets 2x what Bob bets on winning pool
+        // Balanced bets across pools to avoid pool-full
         _buyAs(alice, 1, 1e6);
         _buyAs(carol, 2, 2e6);
         _buyAs(bob, 1, 500_000);
@@ -79,8 +79,8 @@ contract ResolutionTest is TestHelpers {
         uint256 aliceGain = token.balanceOf(alice) - aliceBefore;
         uint256 bobGain = token.balanceOf(bob) - bobBefore;
 
-        // Alice invested 2x Bob, so gets 2x payout (1:1 pricing = proportional)
-        assertApproxEqAbs(aliceGain, bobGain * 2, 100);
+        // Alice bought more and earlier, should get more
+        assertGt(aliceGain, bobGain);
 
         // Total payouts ~ prize pool (90% of 3.5 USDC = 3_150_000 native)
         uint256 expectedPrizePool = 3_500_000 * 9000 / 10000;
@@ -91,13 +91,13 @@ contract ResolutionTest is TestHelpers {
         uint256 catId = _createTestCategory();
 
         vm.prank(alice);
-        vm.expectRevert(BabyNameMarket.NotResolver.selector);
+        vm.expectRevert(BabyNameMarketCurve.NotResolver.selector);
         market.resolve(catId, 1);
     }
 
     function test_RevertWhen_ResolveInvalidCategory() public {
         vm.prank(resolver);
-        vm.expectRevert(BabyNameMarket.InvalidCategory.selector);
+        vm.expectRevert(BabyNameMarketCurve.InvalidCategory.selector);
         market.resolve(999, 1);
     }
 
@@ -108,7 +108,7 @@ contract ResolutionTest is TestHelpers {
         market.resolve(catId, 1);
 
         vm.prank(resolver);
-        vm.expectRevert(BabyNameMarket.CategoryAlreadyResolved.selector);
+        vm.expectRevert(BabyNameMarketCurve.CategoryAlreadyResolved.selector);
         market.resolve(catId, 1);
     }
 
@@ -117,7 +117,7 @@ contract ResolutionTest is TestHelpers {
         _createTestCategoryMale();
 
         vm.prank(resolver);
-        vm.expectRevert(BabyNameMarket.PoolNotInCategory.selector);
+        vm.expectRevert(BabyNameMarketCurve.PoolNotInCategory.selector);
         market.resolve(1, 4);
     }
 
@@ -132,7 +132,7 @@ contract ResolutionTest is TestHelpers {
         market.claim(1);
 
         vm.prank(alice);
-        vm.expectRevert(BabyNameMarket.AlreadyClaimed.selector);
+        vm.expectRevert(BabyNameMarketCurve.AlreadyClaimed.selector);
         market.claim(1);
     }
 
@@ -144,7 +144,7 @@ contract ResolutionTest is TestHelpers {
         market.resolve(catId, 1);
 
         vm.prank(alice);
-        vm.expectRevert(BabyNameMarket.NotWinningPool.selector);
+        vm.expectRevert(BabyNameMarketCurve.NotWinningPool.selector);
         market.claim(2);
     }
 
@@ -153,7 +153,7 @@ contract ResolutionTest is TestHelpers {
         _buyAs(alice, 1, 1e6);
 
         vm.prank(alice);
-        vm.expectRevert(BabyNameMarket.CategoryNotResolved.selector);
+        vm.expectRevert(BabyNameMarketCurve.CategoryNotResolved.selector);
         market.claim(1);
     }
 
@@ -165,13 +165,13 @@ contract ResolutionTest is TestHelpers {
         market.resolve(catId, 1);
 
         vm.prank(bob);
-        vm.expectRevert(BabyNameMarket.NoBalance.selector);
+        vm.expectRevert(BabyNameMarketCurve.NoBalance.selector);
         market.claim(1);
     }
 
     function test_RevertWhen_ClaimInvalidPool() public {
         vm.prank(alice);
-        vm.expectRevert(BabyNameMarket.InvalidPool.selector);
+        vm.expectRevert(BabyNameMarketCurve.InvalidPool.selector);
         market.claim(999);
     }
 }

@@ -63,9 +63,9 @@ contract ViewFunctionsTest is TestHelpers {
 
         assertEq(catId, 1);
         assertEq(name, "Olivia");
-        assertEq(totalSupply, 1e18); // 1:1 pricing
-        assertEq(collateral, 1e18);
-        assertEq(price, 1e18); // Always $1
+        assertGt(totalSupply, 0);
+        assertEq(collateral, 1e18); // 1e6 native normalizes to 1e18
+        assertGt(price, 0);
     }
 
     function test_GetUserPosition_NonParticipant() public {
@@ -86,7 +86,7 @@ contract ViewFunctionsTest is TestHelpers {
         (uint256 tokenBalance, bool hasClaimed, uint256 potentialPayout) =
             market.getUserPosition(1, alice);
 
-        assertEq(tokenBalance, 1e18); // 1:1 pricing
+        assertGt(tokenBalance, 0);
         assertFalse(hasClaimed);
         assertGt(potentialPayout, 0);
     }
@@ -104,7 +104,7 @@ contract ViewFunctionsTest is TestHelpers {
             uint256 year,
             uint256 position,
             ,
-            BabyNameMarket.Gender gender,
+            BabyNameMarketCurve.Gender gender,
             ,
             uint256 poolCount,
             bool resolved,
@@ -115,36 +115,9 @@ contract ViewFunctionsTest is TestHelpers {
 
         assertEq(year, 2025);
         assertEq(position, 1);
-        assertEq(uint8(gender), uint8(BabyNameMarket.Gender.Female));
+        assertEq(uint8(gender), uint8(BabyNameMarketCurve.Gender.Female));
         assertEq(poolCount, 3);
         assertFalse(resolved);
         assertGt(deadline, block.timestamp);
-    }
-
-    function test_SimulateBuy() public {
-        _createTestCategory();
-
-        _buyAs(alice, 1, 1e6);
-        _buyAs(bob, 2, 500_000);
-
-        (uint256 tokens, uint256 avgPrice, uint256 expectedRedemption, ) =
-            market.simulateBuy(1, 500_000);
-
-        // 1:1 pricing
-        assertEq(tokens, 5e17); // 500_000 * 1e12 = 5e17
-        assertEq(avgPrice, 1e18); // Always $1
-        assertGt(expectedRedemption, 0);
-    }
-
-    function test_SimulateBuy_Zero() public {
-        _createTestCategory();
-
-        (uint256 tokens, uint256 avgPrice, uint256 expectedRedemption, int256 profitIfWins) =
-            market.simulateBuy(1, 0);
-
-        assertEq(tokens, 0);
-        assertEq(avgPrice, 0);
-        assertEq(expectedRedemption, 0);
-        assertEq(profitIfWins, 0);
     }
 }

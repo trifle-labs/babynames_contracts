@@ -11,29 +11,43 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
  * @title BabyNameMarket
- * @notice Prediction market for SSA baby name rankings with 1:1 pricing
- * @dev Send X collateral, get X tokens. Parimutuel resolution distributes prize pool.
+ * @notice Prediction market for SSA baby name rankings using asymptotic bonding curves
+ * @dev Uses P(S) = CEILING * (1 - e^(-S/K)) with parimutuel resolution
  *
  * Key Features:
- * - 1:1 pricing: tokens = collateral (transparent, legible)
+ * - Asymptotic curve approaching $1 max price
  * - Buy-only (no selling) until resolution
+ * - "Pool full" mechanism prevents buying when winners would lose
  * - 10% house rake taken at resolution
  * - User-created categories and pools
  * - Category types: single position, exacta, trifecta, top-N
  */
-contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
+contract BabyNameMarketCurve is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
 
+    /// @notice Maximum token price (scaled by 1e18)
+    uint256 public constant CEILING = 1e18; // $1.00
+
+    /// @notice Curve softness parameter - higher = slower price growth
+    /// @dev For $10MM target volume, K=50,000 means hot pools hit $1 at ~$100k
+    uint256 public constant K = 50_000e18;
+
     /// @notice House rake in basis points (1000 = 10%)
     uint256 public constant HOUSE_RAKE_BPS = 1000;
+
+    /// @notice Minimum category collateral before pool-full cap kicks in (18-decimal normalized)
+    uint256 public constant MIN_CATEGORY_COLLATERAL = 0.1 ether;
 
     /// @notice Minimum bet amount (18-decimal normalized)
     uint256 public constant MIN_BET = 0.001 ether;
 
     /// @notice Precision for fixed-point math
     uint256 private constant PRECISION = 1e18;
+
+    /// @notice Buffer for pool-full check (95% = can buy if redemption >= 95% of price)
+    uint256 private constant POOL_FULL_BUFFER_BPS = 9500;
 
     // ============ Category Type Constants ============
 
@@ -168,6 +182,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     error CategoryAlreadyResolved();
     error CategoryNotResolved();
     error BettingClosed();
+    error PoolOversubscribed();
     error InsufficientBet();
     error NotWinningPool();
     error AlreadyClaimed();
@@ -280,6 +295,8 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Set the publication time for a year (when SSA data was published)
+     * @dev Applies to all categories with this year. Bets placed after this time
+     *      can be refunded via refundInvalidBets().
      * @param year The SSA data year (e.g., 2025)
      * @param _publicationTime Unix timestamp when SSA data was published
      */
@@ -297,6 +314,9 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Refund bets placed after the publication time
+     * @dev Resolver computes refund lists off-chain from TokensPurchased events.
+     *      Adjusts balances, pool supply, pool collateral, and category totals.
+     *      Transfers refund amounts back to users. Can be called in batches.
      * @param categoryId The category to refund from
      * @param poolIds Pool IDs for each refund entry
      * @param users User addresses for each refund entry
@@ -348,7 +368,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
      * @param position The rank being predicted (1-1000) or N for top-N categories
      * @param categoryType 0=single, 1=exacta, 2=trifecta, 3=topN
      * @param gender Male or Female
-     * @param names Initial pool names (minimum 1)
+     * @param names Initial pool names (minimum 2)
      * @param deadline Timestamp when betting closes
      * @param proofs Merkle proofs for each name (only checked for single/topN types)
      */
@@ -444,16 +464,27 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
             uint256 normalizedAmount = _normalize(amount);
             if (normalizedAmount < MIN_BET) revert InsufficientBet();
 
+            // Check pool-full condition (only after minimum threshold)
+            if (cat.totalCollateral >= MIN_CATEGORY_COLLATERAL) {
+                if (!_canBuy(poolId, normalizedAmount)) revert PoolOversubscribed();
+            }
+
             // Transfer tokens from buyer
             collateralToken.safeTransferFrom(msg.sender, address(this), amount);
 
-            // 1:1 pricing: tokens = normalizedAmount
-            pools[poolId].totalSupply += normalizedAmount;
+            // Calculate tokens for normalized amount
+            uint256 tokens = _calculateTokensForEth(pools[poolId].totalSupply, normalizedAmount);
+            if (tokens == 0) revert InsufficientBet();
+
+            uint256 avgPrice = normalizedAmount * PRECISION / tokens;
+
+            // Update state
+            pools[poolId].totalSupply += tokens;
             pools[poolId].collateral += normalizedAmount;
             cat.totalCollateral += normalizedAmount;
-            balances[poolId][msg.sender] += normalizedAmount;
+            balances[poolId][msg.sender] += tokens;
 
-            emit TokensPurchased(poolId, msg.sender, normalizedAmount, normalizedAmount, PRECISION);
+            emit TokensPurchased(poolId, msg.sender, tokens, normalizedAmount, avgPrice);
         }
     }
 
@@ -477,6 +508,12 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     // ============ Name Validation ============
 
+    /**
+     * @notice Check if a name is valid (approved or in merkle tree)
+     * @param name The name to validate
+     * @param proof The merkle proof
+     * @return true if valid
+     */
     function _isValidName(string calldata name, bytes32[] memory proof) internal view returns (bool) {
         // No whitelist set = all names allowed
         if (namesMerkleRoot == bytes32(0)) return true;
@@ -492,6 +529,11 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         return MerkleProof.verify(proof, namesMerkleRoot, leaf);
     }
 
+    /**
+     * @notice Convert a string to lowercase
+     * @param str The input string
+     * @return The lowercased string
+     */
     function _toLowerCase(string memory str) internal pure returns (string memory) {
         bytes memory b = bytes(str);
         for (uint256 i = 0; i < b.length; i++) {
@@ -505,9 +547,10 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     // ============ Trading ============
 
     /**
-     * @notice Purchase tokens in a pool (1:1 pricing)
+     * @notice Purchase tokens in a pool
      * @param poolId The pool to buy into
      * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
+     * @dev Reverts if pool is oversubscribed (expected redemption < price)
      */
     function buy(uint256 poolId, uint256 amount) external nonReentrant whenNotPaused {
         if (poolId >= nextPoolId) revert InvalidPool();
@@ -521,16 +564,53 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         if (cat.resolved) revert CategoryAlreadyResolved();
         if (block.timestamp >= cat.deadline) revert BettingClosed();
 
+        // Check pool-full condition (only after minimum threshold)
+        if (cat.totalCollateral >= MIN_CATEGORY_COLLATERAL) {
+            if (!_canBuy(poolId, normalizedAmount)) revert PoolOversubscribed();
+        }
+
         // Transfer tokens from buyer
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
 
-        // 1:1 pricing: tokens = normalizedAmount
-        pool.totalSupply += normalizedAmount;
+        // Calculate tokens for normalized amount
+        uint256 tokens = _calculateTokensForEth(pool.totalSupply, normalizedAmount);
+        if (tokens == 0) revert InsufficientBet();
+
+        uint256 avgPrice = normalizedAmount * PRECISION / tokens;
+
+        // Update state
+        pool.totalSupply += tokens;
         pool.collateral += normalizedAmount;
         cat.totalCollateral += normalizedAmount;
-        balances[poolId][msg.sender] += normalizedAmount;
+        balances[poolId][msg.sender] += tokens;
 
-        emit TokensPurchased(poolId, msg.sender, normalizedAmount, normalizedAmount, PRECISION);
+        emit TokensPurchased(poolId, msg.sender, tokens, normalizedAmount, avgPrice);
+    }
+
+    /**
+     * @notice Check if a pool can accept more bets
+     * @param poolId The pool to check
+     * @param additionalBet The amount being added (for simulation)
+     */
+    function _canBuy(uint256 poolId, uint256 additionalBet) internal view returns (bool) {
+        Pool storage pool = pools[poolId];
+        Category storage cat = categories[pool.categoryId];
+
+        if (pool.totalSupply == 0) return true; // Empty pools always open
+
+        uint256 currentPrice = _getPrice(pool.totalSupply);
+
+        // Simulate: what would redemption be after this purchase?
+        uint256 newTokens = _calculateTokensForEth(pool.totalSupply, additionalBet);
+        uint256 newTotalCollateral = cat.totalCollateral + additionalBet;
+        uint256 newPoolSupply = pool.totalSupply + newTokens;
+
+        // Prize pool after rake
+        uint256 projectedPrizePool = newTotalCollateral * (10000 - HOUSE_RAKE_BPS) / 10000;
+        uint256 projectedRedemption = projectedPrizePool * PRECISION / newPoolSupply;
+
+        // Allow if redemption >= 95% of current price
+        return projectedRedemption >= currentPrice * POOL_FULL_BUFFER_BPS / 10000;
     }
 
     // ============ Resolution ============
@@ -677,6 +757,116 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         return false;
     }
 
+    // ============ Curve Math ============
+
+    /**
+     * @notice Get current token price for a pool
+     * @dev P(S) = CEILING * (1 - e^(-S/K))
+     */
+    function _getPrice(uint256 supply) internal pure returns (uint256) {
+        if (supply == 0) return 0;
+
+        // Calculate e^(-S/K) using our exp approximation
+        // Note: supply is in tokens (1e18 scale), K is 50_000e18
+        uint256 exponent = supply * PRECISION / K; // S/K scaled
+        uint256 expNegative = _expNegative(exponent);
+
+        // P = CEILING * (1 - e^(-S/K))
+        return CEILING * (PRECISION - expNegative) / PRECISION;
+    }
+
+    /**
+     * @notice Calculate cost to buy N tokens from current supply
+     * @dev Cost = ∫[S to S+N] P(x) dx = N - K*(e^(-(S+N)/K) - e^(-S/K)) in token units
+     *      Scaled to ETH: Cost_ETH = CEILING * [N/1e18 - K/1e18 * (e^(-(S+N)/K) - e^(-S/K))]
+     */
+    function _calculateCost(uint256 startSupply, uint256 tokens) internal pure returns (uint256) {
+        if (tokens == 0) return 0;
+
+        uint256 endSupply = startSupply + tokens;
+
+        // e^(-S/K) and e^(-(S+N)/K)
+        uint256 expStart = _expNegative(startSupply * PRECISION / K);
+        uint256 expEnd = _expNegative(endSupply * PRECISION / K);
+
+        // Cost = CEILING * [N + K * (expEnd - expStart)]
+        // Note: expEnd < expStart, so (expEnd - expStart) is negative
+        // Cost = CEILING * N - CEILING * K * (expStart - expEnd) / PRECISION
+
+        uint256 linearPart = CEILING * tokens / PRECISION;
+        uint256 curvePart = CEILING * K * (expStart - expEnd) / PRECISION / PRECISION;
+
+        if (curvePart > linearPart) return 0; // Shouldn't happen, but safety
+        return linearPart - curvePart;
+    }
+
+    /**
+     * @notice Calculate tokens received for ETH amount (binary search)
+     */
+    function _calculateTokensForEth(uint256 startSupply, uint256 ethAmount) internal pure returns (uint256) {
+        if (ethAmount == 0) return 0;
+
+        // Binary search for token amount
+        uint256 low = 0;
+        uint256 high = ethAmount * PRECISION / 1e15; // Upper bound: if price were 0.001
+
+        // Refine upper bound
+        if (high > 1e30) high = 1e30; // Cap for safety
+
+        for (uint256 i = 0; i < 100; i++) {
+            uint256 mid = (low + high) / 2;
+            if (mid == low) break;
+
+            uint256 cost = _calculateCost(startSupply, mid);
+
+            if (cost <= ethAmount) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+
+        return low;
+    }
+
+    /**
+     * @notice Approximate e^(-x) for x >= 0, scaled by PRECISION
+     * @dev Uses Taylor series: e^(-x) ≈ 1 - x + x²/2! - x³/3! + x⁴/4! - ...
+     *      For large x, returns 0 (which is correct as e^(-∞) = 0)
+     */
+    function _expNegative(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return PRECISION;
+        if (x >= 20 * PRECISION) return 0; // e^(-20) ≈ 0
+
+        // For better precision, we use: e^(-x) = 1/e^x
+        // And compute e^x using Taylor series
+
+        // Scale down for computation to avoid overflow
+        // e^(-x) = (e^(-x/n))^n, we use n based on size of x
+
+        uint256 result = PRECISION;
+        uint256 term = PRECISION;
+
+        // Taylor series: e^(-x) = 1 - x + x²/2! - x³/3! + ...
+        // We compute enough terms for good precision
+        for (uint256 i = 1; i <= 20; i++) {
+            term = term * x / (i * PRECISION);
+            if (term == 0) break;
+
+            if (i % 2 == 1) {
+                if (result > term) {
+                    result -= term;
+                } else {
+                    return 0;
+                }
+            } else {
+                result += term;
+            }
+        }
+
+        return result;
+    }
+
     // ============ Token Normalization ============
 
     /// @notice Convert native token amount to 18-decimal internal representation
@@ -692,8 +882,15 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     // ============ View Functions ============
 
     /**
+     * @notice Get current token price for a pool
+     */
+    function getCurrentPrice(uint256 poolId) external view returns (uint256) {
+        return _getPrice(pools[poolId].totalSupply);
+    }
+
+    /**
      * @notice Get expected redemption rate if a pool wins
-     * @return Redemption per token (scaled by 1e18), or max uint if pool is empty
+     * @return Redemption per token (scaled by 1e18), or 0 if pool is empty
      */
     function getExpectedRedemption(uint256 poolId) external view returns (uint256) {
         Pool storage pool = pools[poolId];
@@ -717,17 +914,25 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         if (cat.resolved) return (false, "Category resolved");
         if (block.timestamp >= cat.deadline) return (false, "Betting closed");
 
-        return (true, "");
+        if (cat.totalCollateral < MIN_CATEGORY_COLLATERAL) {
+            return (true, "");
+        }
+
+        if (_canBuy(poolId, MIN_BET)) {
+            return (true, "");
+        } else {
+            return (false, "Pool oversubscribed - bet on other names");
+        }
     }
 
     /**
-     * @notice Simulate a purchase (1:1 pricing)
+     * @notice Simulate a purchase
      * @param poolId The pool to simulate buying into
      * @param amount Token amount in native decimals
-     * @return tokens Amount of tokens that would be received (= normalizedAmount)
-     * @return avgPrice Average price paid per token (always PRECISION = 1e18)
+     * @return tokens Amount of tokens that would be received
+     * @return avgPrice Average price paid per token
      * @return expectedRedemption Expected redemption if this pool wins
-     * @return profitIfWins Profit (normalized) if this pool wins
+     * @return profitIfWins Profit (normalized) if this pool wins (can be negative!)
      */
     function simulateBuy(uint256 poolId, uint256 amount) external view returns (
         uint256 tokens,
@@ -739,10 +944,11 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         Category storage cat = categories[pool.categoryId];
 
         uint256 normalizedAmount = _normalize(amount);
-        if (normalizedAmount == 0) return (0, 0, 0, 0);
 
-        tokens = normalizedAmount;
-        avgPrice = PRECISION;
+        tokens = _calculateTokensForEth(pool.totalSupply, normalizedAmount);
+        if (tokens == 0) return (0, 0, 0, 0);
+
+        avgPrice = normalizedAmount * PRECISION / tokens;
 
         // Project redemption after this purchase
         uint256 newTotalCollateral = cat.totalCollateral + normalizedAmount;
@@ -778,7 +984,7 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
             pool.name,
             pool.totalSupply,
             pool.collateral,
-            PRECISION // 1:1 pricing: always $1
+            _getPrice(pool.totalSupply)
         );
     }
 
@@ -855,5 +1061,21 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
                 potentialPayout = tokenBalance * redemptionRate / PRECISION;
             }
         }
+    }
+
+    /**
+     * @notice Calculate cost to buy a specific number of tokens
+     */
+    function calculateBuyCost(uint256 poolId, uint256 tokenAmount) external view returns (uint256) {
+        return _calculateCost(pools[poolId].totalSupply, tokenAmount);
+    }
+
+    /**
+     * @notice Calculate tokens received for a token amount
+     * @param poolId The pool to calculate for
+     * @param amount Token amount in native decimals
+     */
+    function calculateTokensForAmount(uint256 poolId, uint256 amount) external view returns (uint256) {
+        return _calculateTokensForEth(pools[poolId].totalSupply, _normalize(amount));
     }
 }

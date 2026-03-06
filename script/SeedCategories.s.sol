@@ -5,20 +5,19 @@ import "forge-std/Script.sol";
 import "../src/BabyNameMarket.sol";
 
 /**
- * @notice Seeds the deployed BabyNameMarket with categories based on 2024 SSA top 10.
+ * @notice Seeds the deployed BabyNameMarket with 2025 prediction categories.
  *
- * Categories per gender per year:
- *   - #1, #2, #3 single-name predictions (10 pools each)
- *   - Exacta: 1st+2nd combination (position=12, 90 pools - all ordered pairs)
- *   - Trifecta: 1st+2nd+3rd combination (position=123, 720 pools - all ordered triples)
+ * Categories (10 total):
+ *   Per gender (Female + Male):
+ *   - #1 Most Popular (10 pools, single-position)
+ *   - #2 Most Popular (10 pools, single-position)
+ *   - #3 Most Popular (10 pools, single-position)
+ *   - Top 3 (10 pools = top 10 names, topN — multiple winners)
+ *   - Top 10 (25 pools = top 25 names, topN — multiple winners)
  *
  * Usage:
  *   source .env && forge script script/SeedCategories.s.sol:SeedCategories \
  *     --rpc-url <RPC_URL> --broadcast -vvv
- *
- * Env vars:
- *   PRIVATE_KEY    - deployer/sender private key
- *   MARKET_ADDRESS - deployed BabyNameMarket address
  */
 contract SeedCategories is Script {
 
@@ -27,144 +26,138 @@ contract SeedCategories is Script {
         address marketAddr = vm.envAddress("MARKET_ADDRESS");
         BabyNameMarket market = BabyNameMarket(marketAddr);
 
-        // 2024 SSA top 10 girls
-        string[10] memory girls = [
-            "Olivia", "Emma", "Amelia", "Charlotte", "Mia",
-            "Sophia", "Isabella", "Evelyn", "Ava", "Sofia"
-        ];
-
-        // 2024 SSA top 10 boys
-        string[10] memory boys = [
-            "Liam", "Noah", "Oliver", "Theodore", "James",
-            "Henry", "Mateo", "Elijah", "Lucas", "William"
-        ];
-
         // Deadline: May 15 2026 (SSA release ~Mother's Day)
-        uint256 deadline2025 = 1778918400; // 2026-05-15T00:00:00Z
-        uint256 deadline2026 = 1810454400; // 2027-05-15T00:00:00Z
+        uint256 deadline = 1778918400; // 2026-05-15T00:00:00Z
+
+        bytes32[][] memory emptyProofs = new bytes32[][](0);
 
         vm.startBroadcast(deployerKey);
 
-        // ==========================================
-        // 2025 predictions
-        // ==========================================
+        // ---- Girls ----
+        string[] memory girlsTop10 = _girlsTop10();
+        string[] memory girlsTop25 = _girlsTop25();
 
-        // Single positions: #1, #2, #3
-        _createSingleCategory(market, 2025, 1, BabyNameMarket.Gender.Female, girls, deadline2025);
-        _createSingleCategory(market, 2025, 1, BabyNameMarket.Gender.Male, boys, deadline2025);
-        _createSingleCategory(market, 2025, 2, BabyNameMarket.Gender.Female, girls, deadline2025);
-        _createSingleCategory(market, 2025, 2, BabyNameMarket.Gender.Male, boys, deadline2025);
-        _createSingleCategory(market, 2025, 3, BabyNameMarket.Gender.Female, girls, deadline2025);
-        _createSingleCategory(market, 2025, 3, BabyNameMarket.Gender.Male, boys, deadline2025);
+        // #1, #2, #3 single-position (categoryType=0)
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Female, girlsTop10, deadline, emptyProofs);
+        market.createCategory(2025, 2, 0, BabyNameMarket.Gender.Female, girlsTop10, deadline, emptyProofs);
+        market.createCategory(2025, 3, 0, BabyNameMarket.Gender.Female, girlsTop10, deadline, emptyProofs);
 
-        // Exacta: position=12 means predict 1st AND 2nd in order
-        _createExactaCategory(market, 2025, BabyNameMarket.Gender.Female, girls, deadline2025);
-        _createExactaCategory(market, 2025, BabyNameMarket.Gender.Male, boys, deadline2025);
+        // Top 3 (categoryType=3, position=3, 10 pools)
+        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Female, girlsTop10, deadline, emptyProofs);
 
-        // Trifecta: position=123 means predict 1st, 2nd AND 3rd in order
-        _createTrifectaCategory(market, 2025, BabyNameMarket.Gender.Female, girls, deadline2025);
-        _createTrifectaCategory(market, 2025, BabyNameMarket.Gender.Male, boys, deadline2025);
+        // Top 10 (categoryType=3, position=10, 25 pools)
+        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Female, girlsTop25, deadline, emptyProofs);
 
-        // ==========================================
-        // 2026 predictions
-        // ==========================================
+        // ---- Boys ----
+        string[] memory boysTop10 = _boysTop10();
+        string[] memory boysTop25 = _boysTop25();
 
-        _createSingleCategory(market, 2026, 1, BabyNameMarket.Gender.Female, girls, deadline2026);
-        _createSingleCategory(market, 2026, 1, BabyNameMarket.Gender.Male, boys, deadline2026);
-        _createSingleCategory(market, 2026, 2, BabyNameMarket.Gender.Female, girls, deadline2026);
-        _createSingleCategory(market, 2026, 2, BabyNameMarket.Gender.Male, boys, deadline2026);
-        _createSingleCategory(market, 2026, 3, BabyNameMarket.Gender.Female, girls, deadline2026);
-        _createSingleCategory(market, 2026, 3, BabyNameMarket.Gender.Male, boys, deadline2026);
+        // #1, #2, #3 single-position (categoryType=0)
+        market.createCategory(2025, 1, 0, BabyNameMarket.Gender.Male, boysTop10, deadline, emptyProofs);
+        market.createCategory(2025, 2, 0, BabyNameMarket.Gender.Male, boysTop10, deadline, emptyProofs);
+        market.createCategory(2025, 3, 0, BabyNameMarket.Gender.Male, boysTop10, deadline, emptyProofs);
 
-        _createExactaCategory(market, 2026, BabyNameMarket.Gender.Female, girls, deadline2026);
-        _createExactaCategory(market, 2026, BabyNameMarket.Gender.Male, boys, deadline2026);
+        // Top 3 (categoryType=3, position=3, 10 pools)
+        market.createCategory(2025, 3, 3, BabyNameMarket.Gender.Male, boysTop10, deadline, emptyProofs);
 
-        _createTrifectaCategory(market, 2026, BabyNameMarket.Gender.Female, girls, deadline2026);
-        _createTrifectaCategory(market, 2026, BabyNameMarket.Gender.Male, boys, deadline2026);
+        // Top 10 (categoryType=3, position=10, 25 pools)
+        market.createCategory(2025, 10, 3, BabyNameMarket.Gender.Male, boysTop25, deadline, emptyProofs);
 
         vm.stopBroadcast();
 
-        console.log("Seeded categories complete");
-        console.log("Per year: 6 single + 2 exacta + 2 trifecta = 10 categories");
-        console.log("Total: 20 categories across 2025 + 2026");
+        console.log("Seeded 10 categories for 2025:");
+        console.log("  6 single-position (#1, #2, #3 x 2 genders)");
+        console.log("  2 top-3 (10 pools each)");
+        console.log("  2 top-10 (25 pools each)");
     }
 
-    function _createSingleCategory(
-        BabyNameMarket market,
-        uint256 year,
-        uint256 position,
-        BabyNameMarket.Gender gender,
-        string[10] memory names,
-        uint256 deadline
-    ) internal {
-        string[] memory nameList = new string[](10);
-        for (uint256 i = 0; i < 10; i++) {
-            nameList[i] = names[i];
-        }
-        bytes32[][] memory emptyProofs = new bytes32[][](0);
-        market.createCategory(year, position, 0, gender, nameList, deadline, emptyProofs);
+    // 2024 SSA top 10 girls
+    function _girlsTop10() internal pure returns (string[] memory names) {
+        names = new string[](10);
+        names[0] = "Olivia";
+        names[1] = "Emma";
+        names[2] = "Amelia";
+        names[3] = "Charlotte";
+        names[4] = "Mia";
+        names[5] = "Sophia";
+        names[6] = "Isabella";
+        names[7] = "Evelyn";
+        names[8] = "Ava";
+        names[9] = "Sofia";
     }
 
-    function _createExactaCategory(
-        BabyNameMarket market,
-        uint256 year,
-        BabyNameMarket.Gender gender,
-        string[10] memory names,
-        uint256 deadline
-    ) internal {
-        // Build all ordered pairs: 10 * 9 = 90
-        // Create with first 2, then add the rest
-        string[] memory firstTwo = new string[](2);
-        firstTwo[0] = string.concat(names[0], " / ", names[1]);
-        firstTwo[1] = string.concat(names[0], " / ", names[2]);
-        bytes32[][] memory emptyProofs = new bytes32[][](0);
-        bytes32[] memory emptyProof = new bytes32[](0);
-        uint256 catId = market.createCategory(year, 12, 1, gender, firstTwo, deadline, emptyProofs);
-
-        // Add remaining 88 pairs
-        for (uint256 i = 0; i < 10; i++) {
-            for (uint256 j = 0; j < 10; j++) {
-                if (i == j) continue;
-                // Skip the two we already created
-                if (i == 0 && j == 1) continue;
-                if (i == 0 && j == 2) continue;
-
-                string memory pairName = string.concat(names[i], " / ", names[j]);
-                market.addNameToCategory(catId, pairName, emptyProof);
-            }
-        }
+    // 2024 SSA top 25 girls
+    function _girlsTop25() internal pure returns (string[] memory names) {
+        names = new string[](25);
+        names[0] = "Olivia";
+        names[1] = "Emma";
+        names[2] = "Amelia";
+        names[3] = "Charlotte";
+        names[4] = "Mia";
+        names[5] = "Sophia";
+        names[6] = "Isabella";
+        names[7] = "Evelyn";
+        names[8] = "Ava";
+        names[9] = "Sofia";
+        names[10] = "Camila";
+        names[11] = "Harper";
+        names[12] = "Luna";
+        names[13] = "Eleanor";
+        names[14] = "Violet";
+        names[15] = "Aurora";
+        names[16] = "Elizabeth";
+        names[17] = "Eliana";
+        names[18] = "Hazel";
+        names[19] = "Chloe";
+        names[20] = "Ellie";
+        names[21] = "Nora";
+        names[22] = "Gianna";
+        names[23] = "Lily";
+        names[24] = "Emily";
     }
 
-    function _createTrifectaCategory(
-        BabyNameMarket market,
-        uint256 year,
-        BabyNameMarket.Gender gender,
-        string[10] memory names,
-        uint256 deadline
-    ) internal {
-        // Build all ordered triples: 10 * 9 * 8 = 720
-        // Create with first 2, then add the rest
-        string[] memory firstTwo = new string[](2);
-        firstTwo[0] = string.concat(names[0], " / ", names[1], " / ", names[2]);
-        firstTwo[1] = string.concat(names[0], " / ", names[1], " / ", names[3]);
-        bytes32[][] memory emptyProofs2 = new bytes32[][](0);
-        bytes32[] memory emptyProof2 = new bytes32[](0);
-        uint256 catId = market.createCategory(year, 123, 2, gender, firstTwo, deadline, emptyProofs2);
+    // 2024 SSA top 10 boys
+    function _boysTop10() internal pure returns (string[] memory names) {
+        names = new string[](10);
+        names[0] = "Liam";
+        names[1] = "Noah";
+        names[2] = "Oliver";
+        names[3] = "Theodore";
+        names[4] = "James";
+        names[5] = "Henry";
+        names[6] = "Mateo";
+        names[7] = "Elijah";
+        names[8] = "Lucas";
+        names[9] = "William";
+    }
 
-        // Add remaining 718 triples
-        for (uint256 i = 0; i < 10; i++) {
-            for (uint256 j = 0; j < 10; j++) {
-                if (j == i) continue;
-                for (uint256 k = 0; k < 10; k++) {
-                    if (k == i || k == j) continue;
-                    // Skip the two we already created
-                    if (i == 0 && j == 1 && k == 2) continue;
-                    if (i == 0 && j == 1 && k == 3) continue;
-
-                    string memory triName = string.concat(names[i], " / ", names[j], " / ", names[k]);
-                    market.addNameToCategory(catId, triName, emptyProof2);
-                }
-            }
-        }
+    // 2024 SSA top 25 boys
+    function _boysTop25() internal pure returns (string[] memory names) {
+        names = new string[](25);
+        names[0] = "Liam";
+        names[1] = "Noah";
+        names[2] = "Oliver";
+        names[3] = "Theodore";
+        names[4] = "James";
+        names[5] = "Henry";
+        names[6] = "Mateo";
+        names[7] = "Elijah";
+        names[8] = "Lucas";
+        names[9] = "William";
+        names[10] = "Benjamin";
+        names[11] = "Levi";
+        names[12] = "Ezra";
+        names[13] = "Sebastian";
+        names[14] = "Jack";
+        names[15] = "Daniel";
+        names[16] = "Samuel";
+        names[17] = "Michael";
+        names[18] = "Ethan";
+        names[19] = "Asher";
+        names[20] = "John";
+        names[21] = "Hudson";
+        names[22] = "Luca";
+        names[23] = "Leo";
+        names[24] = "Elias";
     }
 }

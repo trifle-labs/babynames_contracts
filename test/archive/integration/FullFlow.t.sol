@@ -12,9 +12,10 @@ contract FullFlowTest is TestHelpers {
         names[3] = "Sophia";
 
         uint256 catId = market.createCategory(
-            2025, 1, 0, BabyNameMarket.Gender.Female, names, block.timestamp + 30 days, _emptyProofs()
+            2025, 1, 0, BabyNameMarketCurve.Gender.Female, names, block.timestamp + 30 days, _emptyProofs()
         );
 
+        // Balanced bets to avoid pool-full
         _buyAs(alice, 1, 1e6);
         _buyAs(carol, 2, 1_500_000);
         _buyAs(bob, 1, 500_000);
@@ -38,8 +39,7 @@ contract FullFlowTest is TestHelpers {
         uint256 aliceGain = token.balanceOf(alice) - aliceBefore;
         uint256 bobGain = token.balanceOf(bob) - bobBefore;
 
-        // 1:1 pricing: Alice invested 2x Bob -> gets 2x payout
-        assertApproxEqAbs(aliceGain, bobGain * 2, 100);
+        assertGt(aliceGain, bobGain);
         assertApproxEqAbs(aliceGain + bobGain, 3_600_000, 1e3);
     }
 

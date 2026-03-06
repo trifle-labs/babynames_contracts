@@ -5,9 +5,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title IBabyNameMarket
- * @notice Interface for BabyNameMarket prediction market (1:1 pricing, ERC20 collateral)
+ * @notice Interface for BabyNameMarket prediction market (ERC20 collateral)
  */
-interface IBabyNameMarket {
+interface IBabyNameMarketCurve {
 
     enum Gender { Female, Male }
 
@@ -122,6 +122,8 @@ interface IBabyNameMarket {
 
     // ============ View Functions ============
 
+    function getCurrentPrice(uint256 poolId) external view returns (uint256);
+
     function getExpectedRedemption(uint256 poolId) external view returns (uint256);
 
     function canBuy(uint256 poolId) external view returns (bool canBuyNow, string memory reason);
@@ -165,9 +167,16 @@ interface IBabyNameMarket {
         uint256 potentialPayout
     );
 
+    function calculateBuyCost(uint256 poolId, uint256 tokenAmount) external view returns (uint256);
+
+    function calculateTokensForAmount(uint256 poolId, uint256 amount) external view returns (uint256);
+
     // ============ Constants ============
 
+    function CEILING() external view returns (uint256);
+    function K() external view returns (uint256);
     function HOUSE_RAKE_BPS() external view returns (uint256);
+    function MIN_CATEGORY_COLLATERAL() external view returns (uint256);
     function MIN_BET() external view returns (uint256);
     function CAT_SINGLE() external view returns (uint8);
     function CAT_EXACTA() external view returns (uint8);

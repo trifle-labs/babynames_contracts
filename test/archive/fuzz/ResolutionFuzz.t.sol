@@ -31,9 +31,9 @@ contract ResolutionFuzzTest is TestHelpers {
     }
 
     function testFuzz_TwoWinnersShareFairly(uint256 a1, uint256 a2, uint256 loser) public {
-        a1 = bound(a1, 10_000, 50e6);
-        a2 = bound(a2, 10_000, 50e6);
-        loser = bound(loser, 10_000, 50e6);
+        a1 = bound(a1, 10_000, 5e6);
+        a2 = bound(a2, 10_000, 5e6);
+        loser = bound(loser, 10e6, 50e6); // loser > winners to avoid pool-full
 
         _createTestCategory();
 
