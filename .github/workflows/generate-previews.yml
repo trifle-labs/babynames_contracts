@@ -1,0 +1,99 @@
+name: Generate SVG Previews
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  generate-previews:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate SVG previews
+        run: node scripts/preview/generate.js
+
+      - name: Upload SVG previews as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: svg-previews
+          path: previews/
+          retention-days: 30
+
+      - name: Post preview comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const previewDir = 'previews';
+
+            if (!fs.existsSync(previewDir)) {
+              console.log('No previews directory found, skipping comment');
+              return;
+            }
+
+            const files = fs.readdirSync(previewDir).filter(f => f.endsWith('.svg'));
+            if (files.length === 0) {
+              console.log('No SVG previews found');
+              return;
+            }
+
+            // Build markdown table of previews
+            const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let body = '## 🎫 Bet Slip NFT Previews\n\n';
+            body += `SVG previews generated from the onchain renderer. [View all artifacts](${artifactUrl})\n\n`;
+            body += '| Scenario | Preview |\n|---|---|\n';
+
+            for (const file of files) {
+              const name = path.basename(file, '.svg').replace(/-/g, ' ');
+              const svgContent = fs.readFileSync(path.join(previewDir, file), 'utf8');
+              const b64 = Buffer.from(svgContent).toString('base64');
+              body += `| ${name} | ![${name}](data:image/svg+xml;base64,${b64}) |\n`;
+            }
+
+            // Find existing comment to update, or create new one
+            const marker = '<!-- bet-slip-previews -->';
+            body = marker + '\n' + body;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

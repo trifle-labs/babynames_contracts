@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -8,20 +8,25 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "./BetSlipSVG.sol";
 
 /**
  * @title BabyNameMarket
- * @notice Prediction market for SSA baby name rankings with 1:1 pricing
+ * @notice Prediction market for SSA baby name rankings with 1:1 pricing.
+ *         Each bet mints an ERC-721 "bet slip" NFT that represents the position.
  * @dev Send X collateral, get X tokens. Parimutuel resolution distributes prize pool.
  *
  * Key Features:
  * - 1:1 pricing: tokens = collateral (transparent, legible)
+ * - Each buy() mints a soulbound ERC-721 bet-slip NFT (transfers disabled by default)
+ * - Admin can enable transfers via setTransfersEnabled()
  * - Buy-only (no selling) until resolution
  * - 10% house rake taken at resolution
  * - User-created categories and pools
  * - Category types: single position, exacta, trifecta, top-N
  */
-contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
+contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
@@ -78,6 +83,13 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         uint256 deadline;           // Betting closes at this timestamp
     }
 
+    /// @notice Data stored per bet-slip NFT
+    struct BetVoucher {
+        uint256 poolId;       // Pool this bet is placed on
+        uint256 amount;       // Normalized 1e18 bet amount
+        uint256 purchasedAt;  // Block timestamp when the bet was placed
+    }
+
     // ============ State ============
 
     uint256 public nextPoolId = 1;
@@ -102,6 +114,17 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Names manually approved by owner (keccak256(lowercased) => true)
     mapping(bytes32 => bool) public approvedNames;
+
+    // ============ NFT State ============
+
+    /// @notice Next NFT token ID to mint (starts at 1)
+    uint256 public nextTokenId = 1;
+
+    /// @notice Bet slip data per NFT token ID
+    mapping(uint256 => BetVoucher) public vouchers;
+
+    /// @notice When true, NFT transfers are allowed; when false, tokens are soulbound
+    bool public transfersEnabled;
 
     // ============ Events ============
 
@@ -161,6 +184,12 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     event PublicationTimeSet(uint256 indexed year, uint256 publicationTime);
     event BetsRefunded(uint256 indexed categoryId, uint256 totalRefunded, uint256 usersRefunded);
 
+    /// @notice Emitted when a bet-slip NFT is minted
+    event VoucherMinted(uint256 indexed tokenId, uint256 indexed poolId, address indexed owner, uint256 amount);
+
+    /// @notice Emitted when the transfer-enabled flag is changed by the admin
+    event TransfersEnabledSet(bool enabled);
+
     // ============ Errors ============
 
     error InvalidCategory();
@@ -190,10 +219,14 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
     error InvalidPublicationTime();
     error ArrayLengthMismatch();
     error RefundExceedsBalance();
+    error TokensNonTransferable();
 
     // ============ Constructor ============
 
-    constructor(address _resolver, address _token) Ownable(msg.sender) {
+    constructor(address _resolver, address _token)
+        ERC721("Baby Name Market Slip", "BNMS")
+        Ownable(msg.sender)
+    {
         resolver = _resolver;
         collateralToken = IERC20(_token);
         uint8 d;
@@ -274,6 +307,76 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         bytes32 hash = keccak256(bytes(_toLowerCase(name)));
         approvedNames[hash] = true;
         emit NameManuallyApproved(name);
+    }
+
+    /**
+     * @notice Enable or disable NFT transfers.
+     * @dev By default transfers are disabled (soulbound). The owner can enable
+     *      them at any time to allow secondary-market trading.
+     * @param enabled true = transfers allowed; false = soulbound
+     */
+    function setTransfersEnabled(bool enabled) external onlyOwner {
+        transfersEnabled = enabled;
+        emit TransfersEnabledSet(enabled);
+    }
+
+    // ============ ERC-721 Overrides ============
+
+    /**
+     * @dev Block transfers unless the owner has explicitly enabled them.
+     *      Mints (from == address(0)) and burns (to == address(0)) are
+     *      always permitted.
+     */
+    function _update(
+        address to,
+        uint256 tokenId,
+        address auth
+    ) internal override returns (address) {
+        address from = _ownerOf(tokenId);
+        if (!transfersEnabled && from != address(0) && to != address(0)) {
+            revert TokensNonTransferable();
+        }
+        return super._update(to, tokenId, auth);
+    }
+
+    /**
+     * @notice ERC-721 tokenURI returns a fully onchain SVG-based data URI.
+     */
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        _requireOwned(tokenId);
+
+        BetVoucher storage v    = vouchers[tokenId];
+        Pool storage pool       = pools[v.poolId];
+        Category storage cat    = categories[pool.categoryId];
+
+        bool won = false;
+        if (cat.resolved) {
+            if (cat.categoryType == CAT_TOP_N) {
+                won = _isWinningPool(cat, v.poolId);
+            } else {
+                won = (cat.winningPoolId == v.poolId);
+            }
+        }
+
+        BetSlipSVG.SlipData memory d = BetSlipSVG.SlipData({
+            tokenId:            tokenId,
+            poolName:           pool.name,
+            year:               cat.year,
+            categoryType:       cat.categoryType,
+            gender:             uint8(cat.gender),
+            position:           cat.position,
+            amount:             v.amount,
+            tokenDecimals:      tokenDecimals,
+            purchasedAt:        v.purchasedAt,
+            deadline:           cat.deadline,
+            currentTime:        block.timestamp,
+            poolCollateral:     pool.collateral,
+            categoryCollateral: cat.totalCollateral,
+            resolved:           cat.resolved,
+            won:                won
+        });
+
+        return BetSlipSVG.tokenURI(d);
     }
 
     // ============ Publication Time & Refunds ============
@@ -453,7 +556,17 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
             cat.totalCollateral += normalizedAmount;
             balances[poolId][msg.sender] += normalizedAmount;
 
+            // Mint bet-slip NFT
+            uint256 tokenId = nextTokenId++;
+            vouchers[tokenId] = BetVoucher({
+                poolId:      poolId,
+                amount:      normalizedAmount,
+                purchasedAt: block.timestamp
+            });
+            _mint(msg.sender, tokenId);
+
             emit TokensPurchased(poolId, msg.sender, normalizedAmount, normalizedAmount, PRECISION);
+            emit VoucherMinted(tokenId, poolId, msg.sender, normalizedAmount);
         }
     }
 
@@ -530,7 +643,17 @@ contract BabyNameMarket is Ownable, ReentrancyGuard, Pausable {
         cat.totalCollateral += normalizedAmount;
         balances[poolId][msg.sender] += normalizedAmount;
 
+        // Mint bet-slip NFT
+        uint256 tokenId = nextTokenId++;
+        vouchers[tokenId] = BetVoucher({
+            poolId:      poolId,
+            amount:      normalizedAmount,
+            purchasedAt: block.timestamp
+        });
+        _mint(msg.sender, tokenId);
+
         emit TokensPurchased(poolId, msg.sender, normalizedAmount, normalizedAmount, PRECISION);
+        emit VoucherMinted(tokenId, poolId, msg.sender, normalizedAmount);
     }
 
     // ============ Resolution ============
