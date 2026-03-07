@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -65,6 +65,8 @@ interface IBabyNameMarket {
     event NameManuallyApproved(string name);
     event PublicationTimeSet(uint256 indexed year, uint256 publicationTime);
     event BetsRefunded(uint256 indexed categoryId, uint256 totalRefunded, uint256 usersRefunded);
+    event VoucherMinted(uint256 indexed tokenId, uint256 indexed poolId, address indexed owner, uint256 amount);
+    event TransfersEnabledSet(bool enabled);
 
     // ============ Category Management ============
 
@@ -183,6 +185,7 @@ interface IBabyNameMarket {
 
     function setNamesMerkleRoot(bytes32 root) external;
     function approveNameManually(string calldata name) external;
+    function setTransfersEnabled(bool enabled) external;
 
     // ============ State ============
 
@@ -194,4 +197,10 @@ interface IBabyNameMarket {
     function nextCategoryId() external view returns (uint256);
     function balances(uint256 poolId, address user) external view returns (uint256);
     function claimed(uint256 poolId, address user) external view returns (bool);
+
+    // ============ NFT ============
+
+    function nextTokenId() external view returns (uint256);
+    function transfersEnabled() external view returns (bool);
+    function tokenURI(uint256 tokenId) external view returns (string memory);
 }
