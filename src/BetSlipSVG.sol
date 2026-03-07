@@ -275,7 +275,7 @@ library BetSlipSVG {
     }
 
     function _statusColor(string memory label) private pure returns (string memory) {
-        // Compare first byte – ACTIVE/WON → green, LOST → red, CLOSED → yellow
+        // Compare first byte - ACTIVE/WON -> green, LOST -> red, CLOSED -> yellow
         bytes memory b = bytes(label);
         if (b.length == 0) return "#74C69D";
         if (b[0] == "A" || b[0] == "W") return "#74C69D";
@@ -309,7 +309,7 @@ library BetSlipSVG {
         uint256 whole  = native / (10 ** decimals);              // integer part
         uint256 frac   = native % (10 ** decimals);              // fractional part (in native decimals)
         // Show 2 decimal places
-        uint256 fracScaled = frac * 100 / (10 ** decimals);       // 0–99
+        uint256 fracScaled = frac * 100 / (10 ** decimals);       // 0-99
         string memory fracStr = fracScaled < 10
             ? string.concat("0", _uint2str(fracScaled))
             : _uint2str(fracScaled);
@@ -321,7 +321,7 @@ library BetSlipSVG {
      * multiplier = (categoryCollateral * 90%) / poolCollateral
      */
     function _formatMultiplier(uint256 catCollateral, uint256 poolCollateral) private pure returns (string memory) {
-        if (poolCollateral == 0) return "—";
+        if (poolCollateral == 0) return "--";
         // Use 100x precision: multiply by 100 to get two digits
         uint256 prizePool = catCollateral * 90 / 100;
         uint256 mult100   = prizePool * 100 / poolCollateral; // e.g., 320 for 3.20
