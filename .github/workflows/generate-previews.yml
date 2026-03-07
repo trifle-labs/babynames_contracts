@@ -28,9 +28,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install preview dependencies
-        run: npm ci --prefix scripts/preview || (cd scripts/preview && npm install)
-
       - name: Generate SVG previews
         run: node scripts/preview/generate.js
 

@@ -5,8 +5,5 @@
   "main": "generate.js",
   "scripts": {
     "generate": "node generate.js"
-  },
-  "dependencies": {
-    "viem": "^2.0.0"
   }
 }

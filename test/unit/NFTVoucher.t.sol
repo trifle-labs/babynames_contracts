@@ -191,12 +191,14 @@ contract NFTVoucherTest is TestHelpers {
         _buyAs(alice, poolId, 5 * ONE_UNIT);
 
         string memory uri = market.tokenURI(1);
-        bytes memory uriBytes = bytes(uri);
 
         // Should start with "data:application/json;base64,"
-        assertTrue(uriBytes.length > 29, "tokenURI must have content");
-        assertEq(uriBytes[0], "d");
-        assertEq(uriBytes[4], ":");
+        bytes memory prefix = bytes("data:application/json;base64,");
+        bytes memory uriBytes = bytes(uri);
+        assertTrue(uriBytes.length > prefix.length, "tokenURI must have content");
+        for (uint256 i = 0; i < prefix.length; i++) {
+            assertEq(uriBytes[i], prefix[i], "tokenURI prefix mismatch");
+        }
     }
 
     function test_tokenURI_revertsForNonexistentToken() public {
