@@ -48,13 +48,33 @@ contract BetSlipSVG is IBetSlipRenderer {
         string memory json = string.concat(
             '{"name":"Bet Slip #',
             _zeroPad8(d.tokenId),
-            '","description":"Baby Name Market prediction slip","image":"data:image/svg+xml;base64,',
+            ' - ',
+            d.poolName,
+            '","description":"',
+            _description(d),
+            '","image":"data:image/svg+xml;base64,',
             imgB64,
             '","attributes":',
             _attributes(d),
             "}"
         );
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
+    }
+
+    function _description(SlipData memory d) private pure returns (string memory) {
+        return string.concat(
+            "Baby Name Market prediction slip for ",
+            d.poolName,
+            " in the ",
+            _uint2str(d.year),
+            " market (",
+            _formatCategory(d.categoryType, d.gender, d.position),
+            "). Bet: ",
+            _formatAmount(d.amount, d.tokenDecimals),
+            ". Resolves ",
+            _formatDeadline(d.deadline, d.year),
+            "."
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -395,20 +415,25 @@ contract BetSlipSVG is IBetSlipRenderer {
     // ════════════════════════════════════════════════════════════════════
 
     function _binaryMatrix(uint256 tokenId) private pure returns (string memory) {
-        // yHorizTop = 347 + 52 + 14 = 413
-        // COLS=20, ROWS=6, DASH_W=9, GAP_W=5, COL_W=14
-        // x0 = (400 - (20*14 - 5))/2 = (400 - 275)/2 = 62 (rounded)
-        uint256 x0 = 62;
+        // Span full barcode width: x=24..369 (25 cols × 14px – 5px trailing gap = 345px)
+        // ROWS=6, DASH_W=9, ROW_H=3, ROW_GAP=4, COL_W=14
+        // xorshift32 PRNG seeded by tokenId — unique dense pattern per slip
+        uint256 x0   = 24;
         uint256 yTop = 413;
+        uint32 s = uint32(tokenId == 0 ? 0x1234 : tokenId);
+        s ^= uint32(tokenId >> 32);
+        s ^= uint32(tokenId >> 64);
+        if (s == 0) s = 1;
 
         string memory svg;
-        for (uint256 col = 0; col < 20; col++) {
+        for (uint256 col = 0; col < 25; col++) {
             for (uint256 row = 0; row < 6; row++) {
-                uint256 bitIdx = col * 6 + row;
-                // bit 0 is MSB (col0,row0), bit 119 is LSB
-                if (_getBit(tokenId, 119 - bitIdx)) {
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                if ((s & 1) == 1) {
                     uint256 rx = x0 + col * 14;
-                    uint256 ry = yTop + row * 7; // ROW_H(3) + ROW_GAP(4) = 7
+                    uint256 ry = yTop + row * 7;
                     svg = string.concat(
                         svg,
                         '<rect x="', _uint2str(rx),
@@ -419,10 +444,6 @@ contract BetSlipSVG is IBetSlipRenderer {
             }
         }
         return svg;
-    }
-
-    function _getBit(uint256 val, uint256 bitPos) private pure returns (bool) {
-        return (val >> bitPos) & 1 == 1;
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -774,13 +795,25 @@ contract BetSlipSVG is IBetSlipRenderer {
     // ── Attributes JSON ─────────────────────────────────────────────────
 
     function _attributes(SlipData memory d) private pure returns (string memory) {
-        return string.concat(
-            '[{"trait_type":"Year","value":', _uint2str(d.year), '},',
+        string memory a1 = string.concat(
+            '[',
+            '{"trait_type":"Year","value":', _uint2str(d.year), '},',
             '{"trait_type":"Pool Name","value":"', d.poolName, '"},',
             '{"trait_type":"Category","value":"', _formatCategory(d.categoryType, d.gender, d.position), '"},',
-            '{"trait_type":"Status","value":"', _statusCode(d), '"},',
-            '{"trait_type":"Amount (normalized)","value":', _uint2str(d.amount), '}',
+            '{"trait_type":"Status","value":"', _statusCode(d), '"},'
+        );
+        string memory a2 = string.concat(
+            '{"trait_type":"Amount","value":"', _formatAmount(d.amount, d.tokenDecimals), '"},',
+            '{"trait_type":"Placed On","value":"', _formatDate(d.purchasedAt), '"},',
+            '{"trait_type":"Resolves On","value":"', _formatDeadline(d.deadline, d.year), '"},',
+            '{"trait_type":"Payout","value":"', _computePayoutStr(d), '"},'
+        );
+        string memory a3 = string.concat(
+            '{"trait_type":"Pool Total","value":"', _formatAmount(d.poolCollateral, d.tokenDecimals), '"},',
+            '{"trait_type":"Resolved","value":"', d.resolved ? "true" : "false", '"},',
+            '{"trait_type":"Won","value":"', d.won ? "true" : "false", '"}',
             ']'
         );
+        return string.concat(a1, a2, a3);
     }
 }

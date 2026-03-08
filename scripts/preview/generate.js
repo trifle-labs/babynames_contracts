@@ -46,6 +46,15 @@ function formatDate(ts) {
   return `${dd}-${mon}-${yy}`;
 }
 
+function formatDeadline(ts) {
+  if (!ts) return 'TBD';
+  const d = new Date(ts * 1000);
+  if (d.getUTCMonth() === 4) { // May (0-indexed)
+    return `MOTHERS DAY ${d.getUTCFullYear()}`;
+  }
+  return formatDate(ts);
+}
+
 function formatAmount(normalized, decimals = 6) {
   const scaleFactor = 10 ** (18 - decimals);
   const native      = normalized / BigInt(scaleFactor);
@@ -84,12 +93,13 @@ function barcodeLines(tokenId) {
   let bars = '';
   let x    = 20;
   let seed = tokenId === 0 ? 1 : tokenId;
-  for (let i = 0; i < 24; i++) {
-    const w   = 1 + ((seed >> (i % 32)) & 0x3);
-    const gap = 1 + ((seed >> ((i + 5) % 32)) & 0x1);
+  // Tile the pattern until it reaches the full barcode width (x=380)
+  for (let i = 0; x < 380; i++) {
+    const idx = i % 32;
+    const w   = 1 + ((seed >> idx) & 0x3);
+    const gap = 1 + ((seed >> ((idx + 5) % 32)) & 0x1);
     bars += `<rect x="${x}" y="458" width="${w}" height="12" fill="#374151"/>`;
     x += w + gap;
-    if (x > 200) break;
   }
   return bars;
 }
@@ -156,7 +166,7 @@ function renderSVG(slip) {
   <line x1="20" y1="308" x2="380" y2="308" stroke="#E5D9C3" stroke-width="1"/>
   <text x="20" y="326" fill="#9CA3AF" font-family="monospace" font-size="9" letter-spacing="2">RESOLUTION</text>
   ${rows([
-    ['Resolves On', formatDate(slip.deadline), false, 348],
+    ['Resolves On', formatDeadline(slip.deadline), false, 348],
   ])}
   <line x1="20" y1="362" x2="380" y2="362" stroke="#E5D9C3" stroke-width="1"/>
   <text x="20" y="382" fill="#9CA3AF" font-family="monospace" font-size="9" letter-spacing="2">PAYOUT</text>
@@ -191,7 +201,7 @@ const SCENARIOS = [
       amount:            5_000_000_000_000_000_000n,   // $5 (normalized 1e18)
       tokenDecimals:     6,
       purchasedAt:       1735689600,  // 2025-01-01
-      deadline:          1746748800,  // 2025-05-09 (Mothers Day approx)
+      deadline:          1778371200,  // 2026-05-10 (Mothers Day 2026)
       currentTime:       1738368000,  // 2025-02-01
       poolCollateral:    15_000_000_000_000_000_000n,  // $15 in pool
       categoryCollateral:120_000_000_000_000_000_000n, // $120 category total
@@ -211,8 +221,8 @@ const SCENARIOS = [
       amount:            10_000_000_000_000_000_000n,  // $10
       tokenDecimals:     6,
       purchasedAt:       1735689600,
-      deadline:          1746748800,
-      currentTime:       1749340800, // after deadline
+      deadline:          1778371200,  // 2026-05-10 (Mothers Day 2026)
+      currentTime:       1780272000, // after deadline
       poolCollateral:    30_000_000_000_000_000_000n,
       categoryCollateral:240_000_000_000_000_000_000n,
       resolved:          true,
@@ -231,8 +241,8 @@ const SCENARIOS = [
       amount:            25_000_000_000_000_000_000n,  // $25
       tokenDecimals:     6,
       purchasedAt:       1735689600,
-      deadline:          1746748800,
-      currentTime:       1749340800,
+      deadline:          1778371200,  // 2026-05-10 (Mothers Day 2026)
+      currentTime:       1780272000,
       poolCollateral:    50_000_000_000_000_000_000n,
       categoryCollateral:200_000_000_000_000_000_000n,
       resolved:          true,
@@ -251,8 +261,8 @@ const SCENARIOS = [
       amount:            1_000_000_000_000_000_000n,   // $1
       tokenDecimals:     6,
       purchasedAt:       1735689600,
-      deadline:          1741132800, // already past
-      currentTime:       1746748800,
+      deadline:          1778371200,  // 2026-05-10 (Mothers Day 2026)
+      currentTime:       1780272000,  // after deadline
       poolCollateral:    5_000_000_000_000_000_000n,
       categoryCollateral:50_000_000_000_000_000_000n,
       resolved:          false,
