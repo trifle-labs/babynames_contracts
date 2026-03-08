@@ -420,9 +420,8 @@ contract BetSlipSVG is IBetSlipRenderer {
         // xorshift32 PRNG seeded by tokenId — unique dense pattern per slip
         uint256 x0   = 24;
         uint256 yTop = 413;
-        uint32 s = uint32(tokenId == 0 ? 0x1234 : tokenId);
-        s ^= uint32(tokenId >> 32);
-        s ^= uint32(tokenId >> 64);
+        // OR-fold 256-bit tokenId into 32 bits; can only be zero when tokenId==0
+        uint32 s = uint32(tokenId | (tokenId >> 32) | (tokenId >> 64) | (tokenId >> 96));
         if (s == 0) s = 1;
 
         string memory svg;
