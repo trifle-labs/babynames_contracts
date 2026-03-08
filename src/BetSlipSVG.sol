@@ -467,39 +467,32 @@ contract BetSlipSVG is IBetSlipRenderer {
         (s, r4) = _rnd(s);
         (s, r5) = _rnd(s);
 
-        // px = W*(0.5 + (r1-0.5)*spread*2) where spread=0.45
-        // = 400*(0.5 + (r1-0.5)*0.9)
-        // = 200 + 400*0.9*(r1-0.5) = 200 + 360*(r1-0.5)
         int256 px = 200 + int256(r1 * 360 / 0xffffffff) - 180;
-        int256 py = 245 + int256(r2 * 441 / 0xffffffff) - 220; // H=491, same formula
+        int256 py = 245 + int256(r2 * 441 / 0xffffffff) - 220;
 
-        // angle: baseAngle = r3>0.5 ? 0 : 90, jitter = (r4-0.5)*50
-        int256 baseAngle = r3 > 0x7fffffff ? int256(0) : int256(90);
-        int256 angle = baseAngle + int256(r4 * 50 / 0xffffffff) - 25;
+        int256 angle = (r3 > 0x7fffffff ? int256(0) : int256(90)) + int256(r4 * 50 / 0xffffffff) - 25;
 
-        // opacity: (0.4 + r5*0.4/max) * 0.6
-        uint256 opRaw = (400 + r5 * 400 / 0xffffffff);
-        uint256 opacity1000 = opRaw * 600 / 1000; // *0.6
-        uint256 opacity2_1000 = opacity1000 * 750 / 1000; // *0.75
+        string memory lines = _creaseLines(px, py, angle, r5);
 
-        // stroke width: 1.5 * (0.8 + r5*0.4/max) — reuse r5
+        return (string.concat(prev, lines), s);
+    }
+
+    function _creaseLines(int256 px, int256 py, int256 angle, uint256 r5) private pure returns (string memory) {
+        uint256 opacity1000 = (400 + r5 * 400 / 0xffffffff) * 600 / 1000;
         uint256 sw1000 = 1500 * (800 + r5 * 400 / 0xffffffff) / 1000;
 
-        // Compute line endpoints extending through (px,py) at angle
-        // We'll use simplified approach: extend by 600px in each direction
         (int256 x1, int256 y1, int256 x2, int256 y2) = _lineThruPoint(px, py, angle);
 
-        // Perpendicular offset for highlight (~2px)
-        // ox = -sin(angle)*2, oy = cos(angle)*2
-        // Approximate: for small angles near 0 or 90
-        (int256 ox, int256 oy) = _perpOffset(angle);
+        string memory shadow = _creaseShadowLine(x1, y1, x2, y2, sw1000, opacity1000);
+        return string.concat(shadow, _creaseHighlight(x1, y1, x2, y2, angle, sw1000, opacity1000));
+    }
 
-        string memory result = string.concat(
-            prev,
-            _creaseShadowLine(x1, y1, x2, y2, sw1000, opacity1000),
-            _creaseHighlightLine(x1 + ox, y1 + oy, x2 + ox, y2 + oy, sw1000 * 650 / 1000, opacity2_1000)
-        );
-        return (result, s);
+    function _creaseHighlight(
+        int256 x1, int256 y1, int256 x2, int256 y2,
+        int256 angle, uint256 sw1000, uint256 opacity1000
+    ) private pure returns (string memory) {
+        (int256 ox, int256 oy) = _perpOffset(angle);
+        return _creaseHighlightLine(x1 + ox, y1 + oy, x2 + ox, y2 + oy, sw1000 * 650 / 1000, opacity1000 * 750 / 1000);
     }
 
     function _creaseShadowLine(

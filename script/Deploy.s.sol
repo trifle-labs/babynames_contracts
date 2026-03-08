@@ -24,15 +24,18 @@ contract DeployBabyNameMarket is Script {
         vm.stopBroadcast();
 
         // Write deployment artifact
-        string memory json = string.concat(
+        address deployer = vm.addr(deployerPrivateKey);
+        string memory part1 = string.concat(
             '{"address":"', vm.toString(address(market)),
             '","resolver":"', vm.toString(resolver),
-            '","token":"', vm.toString(tokenAddress),
-            '","chainId":', vm.toString(block.chainid),
-            ',"chainName":"', config.name,
-            '","deployer":"', vm.toString(vm.addr(deployerPrivateKey)),
-            '"}'
+            '","token":"', vm.toString(tokenAddress), '"'
         );
+        string memory part2 = string.concat(
+            ',"chainId":', vm.toString(block.chainid),
+            ',"chainName":"', config.name,
+            '","deployer":"', vm.toString(deployer), '"}'
+        );
+        string memory json = string.concat(part1, part2);
         string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         vm.writeFile(path, json);
 
