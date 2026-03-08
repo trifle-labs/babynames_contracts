@@ -18,5 +18,5 @@ node_modules/
 .DS_Store
 data/merkle-tree.json
 
-# Generated SVG previews (created by GitHub Actions)
-previews/
+# Generated SVG previews (local build output)
+/previews/
