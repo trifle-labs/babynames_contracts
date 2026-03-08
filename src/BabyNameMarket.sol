@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "./BetSlipSVG.sol";
+import "./interfaces/IBetSlipRenderer.sol";
 
 /**
  * @title BabyNameMarket
@@ -126,6 +126,9 @@ contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
     /// @notice When true, NFT transfers are allowed; when false, tokens are soulbound
     bool public transfersEnabled;
 
+    /// @notice External SVG renderer contract
+    IBetSlipRenderer public svgRenderer;
+
     // ============ Events ============
 
     event CategoryCreated(
@@ -223,12 +226,13 @@ contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
 
     // ============ Constructor ============
 
-    constructor(address _resolver, address _token)
+    constructor(address _resolver, address _token, address _renderer)
         ERC721("Baby Name Market Slip", "BNMS")
         Ownable(msg.sender)
     {
         resolver = _resolver;
         collateralToken = IERC20(_token);
+        svgRenderer = IBetSlipRenderer(_renderer);
         uint8 d;
         try IERC20Metadata(_token).decimals() returns (uint8 dec) {
             d = dec;
@@ -358,7 +362,7 @@ contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
             }
         }
 
-        BetSlipSVG.SlipData memory d = BetSlipSVG.SlipData({
+        IBetSlipRenderer.SlipData memory d = IBetSlipRenderer.SlipData({
             tokenId:            tokenId,
             poolName:           pool.name,
             year:               cat.year,
@@ -376,7 +380,7 @@ contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
             won:                won
         });
 
-        return BetSlipSVG.tokenURI(d);
+        return svgRenderer.renderTokenURI(d);
     }
 
     // ============ Publication Time & Refunds ============

@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/BabyNameMarket.sol";
+import "../src/BetSlipSVG.sol";
+import "../src/BetSlipLogo.sol";
 import "./helpers/ChainConfig.sol";
 
 contract DeployBabyNameMarket is Script {
@@ -15,7 +17,9 @@ contract DeployBabyNameMarket is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         address tokenAddress = vm.envAddress("TOKEN_ADDRESS");
-        BabyNameMarket market = new BabyNameMarket(resolver, tokenAddress);
+        BetSlipLogo logoContract = new BetSlipLogo();
+        BetSlipSVG renderer = new BetSlipSVG(address(logoContract));
+        BabyNameMarket market = new BabyNameMarket(resolver, tokenAddress, address(renderer));
 
         vm.stopBroadcast();
 

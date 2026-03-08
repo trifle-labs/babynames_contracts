@@ -5,8 +5,8 @@ pragma solidity ^0.8.28;
  * @title BetSlipLogo
  * @notice SVG path data for the BabyNames.Market logo (baby feet + wordmark)
  */
-library BetSlipLogo {
-    function paths() internal pure returns (string memory) {
+contract BetSlipLogo {
+    function paths() external pure returns (string memory) {
         return string.concat(_feet(), _wordmarkA(), _wordmarkB());
     }
 

@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/BabyNameMarket.sol";
+import "../src/BetSlipSVG.sol";
+import "../src/BetSlipLogo.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @notice Dummy ERC20 for testnet deployments
@@ -38,8 +40,10 @@ contract DeployTestnet is Script {
         token.mint(deployer, 1_000_000 * 1e6);
         console.log("Minted 1,000,000 tUSDC to deployer:", deployer);
 
-        // 3. Deploy BabyNameMarket
-        BabyNameMarket market = new BabyNameMarket(resolver, address(token));
+        // 3. Deploy renderer and BabyNameMarket
+        BetSlipLogo logoContract = new BetSlipLogo();
+        BetSlipSVG renderer = new BetSlipSVG(address(logoContract));
+        BabyNameMarket market = new BabyNameMarket(resolver, address(token), address(renderer));
         console.log("BabyNameMarket deployed to:", address(market));
 
         vm.stopBroadcast();

@@ -3,13 +3,21 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "./BetSlipLogo.sol";
+import "./interfaces/IBetSlipRenderer.sol";
 
 /**
  * @title BetSlipSVG
- * @notice Library for generating onchain SVG art for Baby Name Market bet slip NFTs.
+ * @notice Deployed contract for generating onchain SVG art for Baby Name Market bet slip NFTs.
  *         Produces a 400×491 receipt-style slip matching the slip-generator reference.
+ *         Deployed separately to avoid EIP-170 contract size limits on BabyNameMarket.
  */
-library BetSlipSVG {
+contract BetSlipSVG is IBetSlipRenderer {
+
+    BetSlipLogo public immutable logo;
+
+    constructor(address _logo) {
+        logo = BetSlipLogo(_logo);
+    }
 
     // ── Status constants ────────────────────────────────────────────────
     uint8 internal constant STATUS_ACTIVE  = 0;
@@ -29,29 +37,11 @@ library BetSlipSVG {
     // W=400, M=24, LOGO_H=105, H=491
     // All Y-positions hard-coded from the JS reference layout.
 
-    struct SlipData {
-        uint256 tokenId;
-        string  poolName;
-        uint256 year;
-        uint8   categoryType;
-        uint8   gender;       // 0=Female, 1=Male
-        uint256 position;     // rank number or top-N
-        uint256 amount;       // normalized 1e18 bet amount
-        uint8   tokenDecimals;
-        uint256 purchasedAt;  // unix timestamp
-        uint256 deadline;     // unix timestamp
-        uint256 currentTime;  // block.timestamp at tokenURI call time
-        uint256 poolCollateral;      // normalized 1e18
-        uint256 categoryCollateral;  // normalized 1e18
-        bool    resolved;
-        bool    won;
-    }
-
     // ════════════════════════════════════════════════════════════════════
     //  Entry point
     // ════════════════════════════════════════════════════════════════════
 
-    function tokenURI(SlipData memory d) internal pure returns (string memory) {
+    function renderTokenURI(SlipData calldata d) external view override returns (string memory) {
         string memory svg    = _svg(d);
         string memory imgB64 = Base64.encode(bytes(svg));
 
@@ -71,7 +61,7 @@ library BetSlipSVG {
     //  SVG root — split into small helpers to stay under stack limit
     // ════════════════════════════════════════════════════════════════════
 
-    function _svg(SlipData memory d) private pure returns (string memory) {
+    function _svg(SlipData memory d) private view returns (string memory) {
         return string.concat(
             '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="491" viewBox="0 0 400 491">',
             _defs(),
@@ -147,10 +137,10 @@ library BetSlipSVG {
 
     // ── Logo ────────────────────────────────────────────────────────────
 
-    function _logo() private pure returns (string memory) {
+    function _logo() private view returns (string memory) {
         return string.concat(
             '<svg x="0" y="0" width="400" height="105" viewBox="0 0 250 66" preserveAspectRatio="xMidYMid meet">',
-            BetSlipLogo.paths(),
+            logo.paths(),
             "</svg>"
         );
     }
