@@ -9,7 +9,7 @@ jobs:
   generate-previews:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
 
     steps:
@@ -31,69 +31,96 @@ jobs:
       - name: Generate SVG previews
         run: node scripts/preview/generate.js
 
-      - name: Upload SVG previews as artifacts
+      - name: Convert SVGs to PNGs
+        run: |
+          sudo apt-get install -y --quiet librsvg2-bin
+          for f in previews/*.svg; do
+            rsvg-convert -f png -w 800 "$f" -o "${f%.svg}.png"
+            echo "Converted: $f -> ${f%.svg}.png"
+          done
+
+      - name: Upload previews as artifacts
         uses: actions/upload-artifact@v4
         with:
           name: svg-previews
           path: previews/
           retention-days: 30
 
-      - name: Post preview comment on PR
+      - name: Publish PNGs to branch and post PR comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
+            const fs   = require('fs');
             const path = require('path');
             const previewDir = 'previews';
+            const prNumber   = context.issue.number;
+            const branch     = `previews/pr-${prNumber}`;
+            const { owner, repo } = context.repo;
 
-            if (!fs.existsSync(previewDir)) {
-              console.log('No previews directory found, skipping comment');
-              return;
-            }
-
-            const files = fs.readdirSync(previewDir).filter(f => f.endsWith('.svg'));
+            const files = fs.readdirSync(previewDir).filter(f => f.endsWith('.png'));
             if (files.length === 0) {
-              console.log('No SVG previews found');
+              console.log('No PNG previews found, skipping');
               return;
             }
 
-            // Build markdown table of previews
-            const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let body = '## 🎫 Bet Slip NFT Previews\n\n';
-            body += `SVG previews generated from the onchain renderer. [View all artifacts](${artifactUrl})\n\n`;
-            body += '| Scenario | Preview |\n|---|---|\n';
-
+            // Create a git blob for each PNG
+            const treeItems = [];
             for (const file of files) {
-              const name = path.basename(file, '.svg').replace(/-/g, ' ');
-              const svgContent = fs.readFileSync(path.join(previewDir, file), 'utf8');
-              const b64 = Buffer.from(svgContent).toString('base64');
-              body += `| ${name} | ![${name}](data:image/svg+xml;base64,${b64}) |\n`;
+              const content = fs.readFileSync(path.join(previewDir, file));
+              const { data: blob } = await github.rest.git.createBlob({
+                owner, repo,
+                content: content.toString('base64'),
+                encoding: 'base64',
+              });
+              treeItems.push({ path: file, mode: '100644', type: 'blob', sha: blob.sha });
             }
 
-            // Find existing comment to update, or create new one
-            const marker = '<!-- bet-slip-previews -->';
-            body = marker + '\n' + body;
+            // Create a tree containing only the PNG files
+            const { data: newTree } = await github.rest.git.createTree({ owner, repo, tree: treeItems });
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
+            // Find the parent commit if the branch already exists
+            let parents = [];
+            try {
+              const { data: ref } = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+              parents = [ref.object.sha];
+            } catch { /* new branch – orphan commit */ }
+
+            // Create commit
+            const { data: commit } = await github.rest.git.createCommit({
+              owner, repo,
+              message: `chore: SVG previews for PR #${prNumber} (run ${context.runId})`,
+              tree: newTree.sha,
+              parents,
             });
 
-            const existing = comments.find(c => c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
+            // Update or create the branch ref
+            try {
+              await github.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: commit.sha, force: true });
+            } catch {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: commit.sha });
             }
+
+            // Build the PR comment body using raw.githubusercontent.com PNG URLs
+            const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
+            const runUrl  = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const marker  = '<!-- bet-slip-previews -->';
+            let body = `${marker}\n## 🎫 Bet Slip NFT Previews\n\n`;
+            body += `Onchain SVG art rendered from \`BetSlipSVG.sol\` · [CI run](${runUrl})\n\n`;
+            body += '| Scenario | Preview |\n|---|---|\n';
+            for (const file of files) {
+              const name = path.basename(file, '.png').replace(/-/g, ' ');
+              // Query-string cache-bust so GitHub CDN always fetches the latest image
+              body += `| ${name} | ![${name}](${rawBase}/${file}?v=${context.runId}) |\n`;
+            }
+
+            // Upsert the comment
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }
+
+            console.log(`Published ${files.length} PNG previews to branch '${branch}'`);
