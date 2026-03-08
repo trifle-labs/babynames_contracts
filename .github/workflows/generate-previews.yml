@@ -9,13 +9,15 @@ jobs:
   generate-previews:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ github.head_ref }}
+          token: ${{ github.token }}
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -23,13 +25,16 @@ jobs:
       - name: Build contracts
         run: forge build
 
-      - name: Set up Node.js
+      - name: Generate previews from contract
+        run: |
+          mkdir -p previews
+          forge script scripts/preview/GeneratePreviews.s.sol
+
+      - name: Decode data URIs to SVGs
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Generate SVG previews
-        run: node scripts/preview/generate.js
+      - run: node scripts/preview/decode-previews.js
 
       - name: Convert SVGs to PNGs
         run: |
@@ -39,77 +44,59 @@ jobs:
             echo "Converted: $f -> ${f%.svg}.png"
           done
 
-      - name: Upload SVG + PNG artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: svg-previews
           path: previews/
           retention-days: 30
 
-      - name: Post inline previews to PR comment
+      - name: Commit preview images to PR branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only commit PNGs (not .uri or .svg intermediates)
+          cp previews/*.png docs/previews/ 2>/dev/null || mkdir -p docs/previews && cp previews/*.png docs/previews/
+          git add docs/previews/*.png
+          git diff --cached --quiet && echo "No preview changes" && exit 0
+          git commit -m "Update NFT preview images [skip ci]"
+          git push
+
+      - name: Post preview comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
-        env:
-          GH_TOKEN: ${{ github.token }}
         with:
           script: |
             const fs   = require('fs');
             const path = require('path');
-            const previewDir = 'previews';
+
             const prNumber   = context.issue.number;
             const { owner, repo } = context.repo;
+            const branch = context.payload.pull_request.head.ref;
+            const sha    = context.payload.pull_request.head.sha.slice(0, 7);
 
-            // Upload each PNG to GitHub's issue-attachment CDN.
-            // This is the same endpoint used when you drag-and-drop an image into a
-            // GitHub comment; it returns https://github.com/user-attachments/assets/…
-            // URLs that always render inline in PR markdown.
-            const pngFiles = fs.readdirSync(previewDir).filter(f => f.endsWith('.png'));
+            const pngFiles = fs.readdirSync('docs/previews').filter(f => f.endsWith('.png')).sort();
             if (pngFiles.length === 0) {
-              console.log('No PNG previews found, skipping');
+              console.log('No PNG previews found');
               return;
             }
 
-            const assetUrls = {};
-            for (const file of pngFiles) {
-              const buf = fs.readFileSync(path.join(previewDir, file));
-              const res = await fetch(
-                `https://uploads.github.com/repos/${owner}/${repo}/issues/${prNumber}/assets` +
-                `?name=${encodeURIComponent(file)}`,
-                {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${process.env.GH_TOKEN}`,
-                    'Content-Type': 'image/png',
-                    Accept: 'application/vnd.github+json',
-                  },
-                  body: buf,
-                }
-              );
-              if (res.ok) {
-                const data = await res.json();
-                assetUrls[file] = data.browser_download_url;
-                console.log(`✓ ${file} -> ${data.browser_download_url}`);
-              } else {
-                console.error(`✗ ${file}: ${res.status} ${await res.text()}`);
-              }
-            }
-
-            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
             const marker = '<!-- bet-slip-previews -->';
-            let body = `${marker}\n## 🎫 Bet Slip NFT Previews\n\n`;
-            body += `SVG art rendered from \`BetSlipSVG.sol\` · [SVG artifacts](${runUrl})\n\n`;
-            body += '| Scenario | Preview |\n|---|---|\n';
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            let body = `${marker}\n## Bet Slip NFT Previews\n\n`;
+            body += `Rendered from \`BetSlipSVG.sol\` at \`${sha}\` · [Artifacts](${runUrl})\n\n`;
+
             for (const file of pngFiles) {
               const name = path.basename(file, '.png').replace(/-/g, ' ');
-              if (assetUrls[file]) {
-                body += `| ${name} | ![${name}](${assetUrls[file]}) |\n`;
-              } else {
-                body += `| ${name} | *(upload failed – see [artifacts](${runUrl}))* |\n`;
-              }
+              const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/docs/previews/${file}`;
+              body += `### ${name}\n![${name}](${rawUrl})\n\n`;
             }
 
-            // Upsert comment
-            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber });
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number: prNumber
+            });
             const existing = comments.find(c => c.body && c.body.includes(marker));
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
@@ -117,4 +104,4 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
             }
 
-            console.log(`Posted preview comment with ${Object.keys(assetUrls).length} images`);
+            console.log(`Posted preview comment with ${pngFiles.length} images`);
