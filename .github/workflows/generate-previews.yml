@@ -9,7 +9,7 @@ jobs:
   generate-previews:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
 
     steps:
@@ -39,82 +39,76 @@ jobs:
             echo "Converted: $f -> ${f%.svg}.png"
           done
 
-      - name: Upload previews as artifacts
+      - name: Upload SVG + PNG artifacts
         uses: actions/upload-artifact@v4
         with:
           name: svg-previews
           path: previews/
           retention-days: 30
 
-      - name: Publish PNGs to branch and post PR comment
+      - name: Post inline previews to PR comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           script: |
             const fs   = require('fs');
             const path = require('path');
             const previewDir = 'previews';
             const prNumber   = context.issue.number;
-            const branch     = `previews/pr-${prNumber}`;
             const { owner, repo } = context.repo;
 
-            const files = fs.readdirSync(previewDir).filter(f => f.endsWith('.png'));
-            if (files.length === 0) {
+            // Upload each PNG to GitHub's issue-attachment CDN.
+            // This is the same endpoint used when you drag-and-drop an image into a
+            // GitHub comment; it returns https://github.com/user-attachments/assets/…
+            // URLs that always render inline in PR markdown.
+            const pngFiles = fs.readdirSync(previewDir).filter(f => f.endsWith('.png'));
+            if (pngFiles.length === 0) {
               console.log('No PNG previews found, skipping');
               return;
             }
 
-            // Create a git blob for each PNG
-            const treeItems = [];
-            for (const file of files) {
-              const content = fs.readFileSync(path.join(previewDir, file));
-              const { data: blob } = await github.rest.git.createBlob({
-                owner, repo,
-                content: content.toString('base64'),
-                encoding: 'base64',
-              });
-              treeItems.push({ path: file, mode: '100644', type: 'blob', sha: blob.sha });
+            const assetUrls = {};
+            for (const file of pngFiles) {
+              const buf = fs.readFileSync(path.join(previewDir, file));
+              const res = await fetch(
+                `https://uploads.github.com/repos/${owner}/${repo}/issues/${prNumber}/assets` +
+                `?name=${encodeURIComponent(file)}`,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${process.env.GH_TOKEN}`,
+                    'Content-Type': 'image/png',
+                    Accept: 'application/vnd.github+json',
+                  },
+                  body: buf,
+                }
+              );
+              if (res.ok) {
+                const data = await res.json();
+                assetUrls[file] = data.browser_download_url;
+                console.log(`✓ ${file} -> ${data.browser_download_url}`);
+              } else {
+                console.error(`✗ ${file}: ${res.status} ${await res.text()}`);
+              }
             }
 
-            // Create a tree containing only the PNG files
-            const { data: newTree } = await github.rest.git.createTree({ owner, repo, tree: treeItems });
-
-            // Find the parent commit if the branch already exists
-            let parents = [];
-            try {
-              const { data: ref } = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
-              parents = [ref.object.sha];
-            } catch { /* new branch – orphan commit */ }
-
-            // Create commit
-            const { data: commit } = await github.rest.git.createCommit({
-              owner, repo,
-              message: `chore: SVG previews for PR #${prNumber} (run ${context.runId})`,
-              tree: newTree.sha,
-              parents,
-            });
-
-            // Update or create the branch ref
-            try {
-              await github.rest.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: commit.sha, force: true });
-            } catch {
-              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: commit.sha });
-            }
-
-            // Build the PR comment body using raw.githubusercontent.com PNG URLs
-            const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
-            const runUrl  = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
-            const marker  = '<!-- bet-slip-previews -->';
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const marker = '<!-- bet-slip-previews -->';
             let body = `${marker}\n## 🎫 Bet Slip NFT Previews\n\n`;
-            body += `Onchain SVG art rendered from \`BetSlipSVG.sol\` · [CI run](${runUrl})\n\n`;
+            body += `SVG art rendered from \`BetSlipSVG.sol\` · [SVG artifacts](${runUrl})\n\n`;
             body += '| Scenario | Preview |\n|---|---|\n';
-            for (const file of files) {
+            for (const file of pngFiles) {
               const name = path.basename(file, '.png').replace(/-/g, ' ');
-              // Query-string cache-bust so GitHub CDN always fetches the latest image
-              body += `| ${name} | ![${name}](${rawBase}/${file}?v=${context.runId}) |\n`;
+              if (assetUrls[file]) {
+                body += `| ${name} | ![${name}](${assetUrls[file]}) |\n`;
+              } else {
+                body += `| ${name} | *(upload failed – see [artifacts](${runUrl}))* |\n`;
+              }
             }
 
-            // Upsert the comment
+            // Upsert comment
             const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber });
             const existing = comments.find(c => c.body && c.body.includes(marker));
             if (existing) {
@@ -123,4 +117,4 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
             }
 
-            console.log(`Published ${files.length} PNG previews to branch '${branch}'`);
+            console.log(`Posted preview comment with ${Object.keys(assetUrls).length} images`);
