@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../../src/BabyNameMarket.sol";
+import "../../src/BetSlipSVG.sol";
+import "../../src/BetSlipLogo.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @notice Simple ERC20 mock with public mint for testing
@@ -42,8 +44,11 @@ abstract contract TestHelpers is Test {
         // Deploy mock USDC (6 decimals)
         token = new MockERC20("USD Coin", "USDC", 6);
 
+        BetSlipLogo logoContract = new BetSlipLogo();
+        BetSlipSVG renderer = new BetSlipSVG(address(logoContract));
+
         vm.prank(owner);
-        market = new BabyNameMarket(resolver, address(token));
+        market = new BabyNameMarket(resolver, address(token), address(renderer));
 
         // Mint tokens and approve market for test users
         _fundUser(alice, 100_000 * ONE_UNIT);
