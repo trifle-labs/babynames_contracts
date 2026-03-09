@@ -53,6 +53,7 @@ contract DeployTestnet is Script {
             '{"address":"', vm.toString(address(market)),
             '","resolver":"', vm.toString(resolver),
             '","token":"', vm.toString(address(token)),
+            '","renderer":"', vm.toString(address(renderer)),
             '","chainId":', vm.toString(block.chainid),
             ',"chainName":"base_sepolia"',
             ',"deployer":"', vm.toString(deployer),

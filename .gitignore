@@ -2,8 +2,7 @@
 cache/
 out/
 
-# Build artifacts
-abi/
+# Build artifacts (abi/ is tracked for the npm package)
 
 # Environment
 .env
