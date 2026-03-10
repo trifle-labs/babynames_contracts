@@ -6,12 +6,13 @@ import "../src/BabyNameMarket.sol";
 import "../src/BetSlipSVG.sol";
 import "../src/BetSlipLogo.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
-/// @notice Dummy ERC20 for testnet deployments
-contract TestUSDC is ERC20 {
+/// @notice Dummy ERC20 with EIP-2612 permit for testnet deployments
+contract TestUSDC is ERC20, ERC20Permit {
     uint8 private _dec;
 
-    constructor() ERC20("Test USDC", "tUSDC") {
+    constructor() ERC20("Test USDC", "tUSDC") ERC20Permit("Test USDC") {
         _dec = 6;
     }
 
