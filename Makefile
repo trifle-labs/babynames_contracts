@@ -25,7 +25,7 @@ gas:
 # ABI export
 export-abi:
 	@mkdir -p abi
-	forge inspect BabyNameMarket abi > abi/BabyNameMarket.json
+	forge inspect BabyNameMarket abi --json > abi/BabyNameMarket.json
 	@echo "ABI exported to abi/BabyNameMarket.json"
 
 # Local dev
