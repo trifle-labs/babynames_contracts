@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -627,6 +628,34 @@ contract BabyNameMarket is ERC721, Ownable, ReentrancyGuard, Pausable {
      * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
      */
     function buy(uint256 poolId, uint256 amount) external nonReentrant whenNotPaused {
+        _buy(poolId, amount);
+    }
+
+    /**
+     * @notice Purchase tokens using EIP-2612 permit (gasless approval)
+     * @param poolId The pool to buy into
+     * @param amount Token amount in native decimals (e.g., 1000000 for 1 USDC)
+     * @param deadline Permit signature deadline
+     * @param v ECDSA recovery byte
+     * @param r ECDSA r value
+     * @param s ECDSA s value
+     */
+    function buyWithPermit(
+        uint256 poolId,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant whenNotPaused {
+        IERC20Permit(address(collateralToken)).permit(msg.sender, address(this), amount, deadline, v, r, s);
+        _buy(poolId, amount);
+    }
+
+    /**
+     * @dev Internal buy logic shared by buy() and buyWithPermit()
+     */
+    function _buy(uint256 poolId, uint256 amount) internal {
         if (poolId >= nextPoolId) revert InvalidPool();
 
         uint256 normalizedAmount = _normalize(amount);
