@@ -578,7 +578,7 @@ contract VaultTest is Test {
         bytes32[] memory proof = new bytes32[](0);
 
         vm.prank(bob);
-        bytes32 proposalId = vault.proposeRegional("Olivia", 2025, "california", proof, amounts);
+        bytes32 proposalId = vault.proposeRegional("Olivia", 2025, "CA", proof, amounts);
         assertTrue(proposalId != bytes32(0));
     }
 
@@ -640,7 +640,7 @@ contract VaultTest is Test {
         bytes32 key3 = vault.getMarketKey("Olivia", 2026, "");
         assertTrue(key1 != key3, "different year = different key");
 
-        bytes32 key4 = vault.getMarketKey("Olivia", 2025, "california");
+        bytes32 key4 = vault.getMarketKey("Olivia", 2025, "CA");
         assertTrue(key1 != key4, "different region = different key");
     }
 

@@ -58,6 +58,7 @@ contract DeployTestnet is Script {
         Vault vault = new Vault(
             address(pm),
             deployer,       // surplusRecipient
+            deployer,       // feeSource
             deployer,       // defaultOracle
             20e6,           // defaultLaunchThreshold ($20)
             7 days,         // defaultDeadlineDuration

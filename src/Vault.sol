@@ -44,6 +44,12 @@ contract Vault is OwnableRoles {
     /// @notice Whether a year is open for new proposals. Years are locked by default.
     mapping(uint16 => bool) public yearOpen;
 
+    // ========== REGION VALIDATION ==========
+
+    /// @notice Valid region codes. "" (empty) is always valid (national).
+    ///         Prepopulated with all 50 US state abbreviations (uppercased).
+    mapping(bytes32 => bool) public validRegions;
+
     // ========== DEFAULT MARKET PARAMS ==========
 
     address public defaultOracle;
@@ -141,6 +147,8 @@ contract Vault is OwnableRoles {
     event DefaultDeadlineDurationUpdated(uint256 oldDuration, uint256 newDuration);
     event YearOpened(uint16 indexed year);
     event YearClosed(uint16 indexed year);
+    event RegionAdded(string region);
+    event RegionRemoved(string region);
 
     // ========== ERRORS ==========
 
@@ -158,6 +166,7 @@ contract Vault is OwnableRoles {
     error InvalidName();
     error InvalidYear();
     error YearNotOpen();
+    error InvalidRegion();
     error BelowThreshold();
     error NotWithdrawable();
     error NothingToWithdraw();
@@ -199,7 +208,64 @@ contract Vault is OwnableRoles {
 
         // All years are locked by default — admin must openYear() before proposals can be created
 
+        // Prepopulate all 50 US state abbreviations
+        _initRegions();
+
         usdc.approve(_predictionMarket, type(uint256).max);
+    }
+
+    function _initRegions() internal {
+        // All 50 US states by two-letter abbreviation (uppercase)
+        validRegions[keccak256("AL")] = true;
+        validRegions[keccak256("AK")] = true;
+        validRegions[keccak256("AZ")] = true;
+        validRegions[keccak256("AR")] = true;
+        validRegions[keccak256("CA")] = true;
+        validRegions[keccak256("CO")] = true;
+        validRegions[keccak256("CT")] = true;
+        validRegions[keccak256("DE")] = true;
+        validRegions[keccak256("FL")] = true;
+        validRegions[keccak256("GA")] = true;
+        validRegions[keccak256("HI")] = true;
+        validRegions[keccak256("ID")] = true;
+        validRegions[keccak256("IL")] = true;
+        validRegions[keccak256("IN")] = true;
+        validRegions[keccak256("IA")] = true;
+        validRegions[keccak256("KS")] = true;
+        validRegions[keccak256("KY")] = true;
+        validRegions[keccak256("LA")] = true;
+        validRegions[keccak256("ME")] = true;
+        validRegions[keccak256("MD")] = true;
+        validRegions[keccak256("MA")] = true;
+        validRegions[keccak256("MI")] = true;
+        validRegions[keccak256("MN")] = true;
+        validRegions[keccak256("MS")] = true;
+        validRegions[keccak256("MO")] = true;
+        validRegions[keccak256("MT")] = true;
+        validRegions[keccak256("NE")] = true;
+        validRegions[keccak256("NV")] = true;
+        validRegions[keccak256("NH")] = true;
+        validRegions[keccak256("NJ")] = true;
+        validRegions[keccak256("NM")] = true;
+        validRegions[keccak256("NY")] = true;
+        validRegions[keccak256("NC")] = true;
+        validRegions[keccak256("ND")] = true;
+        validRegions[keccak256("OH")] = true;
+        validRegions[keccak256("OK")] = true;
+        validRegions[keccak256("OR")] = true;
+        validRegions[keccak256("PA")] = true;
+        validRegions[keccak256("RI")] = true;
+        validRegions[keccak256("SC")] = true;
+        validRegions[keccak256("SD")] = true;
+        validRegions[keccak256("TN")] = true;
+        validRegions[keccak256("TX")] = true;
+        validRegions[keccak256("UT")] = true;
+        validRegions[keccak256("VT")] = true;
+        validRegions[keccak256("VA")] = true;
+        validRegions[keccak256("WA")] = true;
+        validRegions[keccak256("WV")] = true;
+        validRegions[keccak256("WI")] = true;
+        validRegions[keccak256("WY")] = true;
     }
 
     // ========== ADMIN ==========
@@ -213,6 +279,23 @@ contract Vault is OwnableRoles {
     function closeYear(uint16 year) external onlyOwner {
         yearOpen[year] = false;
         emit YearClosed(year);
+    }
+
+    function addRegion(string calldata region) external onlyOwner {
+        string memory upper = _toUpperCase(region);
+        validRegions[keccak256(bytes(upper))] = true;
+        emit RegionAdded(upper);
+    }
+
+    function removeRegion(string calldata region) external onlyOwner {
+        string memory upper = _toUpperCase(region);
+        validRegions[keccak256(bytes(upper))] = false;
+        emit RegionRemoved(upper);
+    }
+
+    function isValidRegion(string memory region) public view returns (bool) {
+        if (bytes(region).length == 0) return true; // "" = national, always valid
+        return validRegions[keccak256(bytes(_toUpperCase(region)))];
     }
 
     function setNamesMerkleRoot(bytes32 _root) external onlyOwner {
@@ -316,15 +399,17 @@ contract Vault is OwnableRoles {
     ) internal returns (bytes32) {
         if (!isValidName(name, proof)) revert InvalidName();
         if (!yearOpen[year]) revert YearNotOpen();
+        if (!isValidRegion(region)) revert InvalidRegion();
         if (defaultOracle == address(0)) revert DefaultsNotSet();
         if (defaultDeadlineDuration == 0) revert DefaultsNotSet();
         if (defaultLaunchThreshold == 0) revert DefaultsNotSet();
 
         string memory lowered = _toLowerCase(name);
-        string memory loweredRegion = _toLowerCase(region);
+        // Store region as uppercase abbreviation (or "" for national)
+        string memory upperRegion = bytes(region).length > 0 ? _toUpperCase(region) : region;
 
         // Unique key per (name, year, region)
-        bytes32 marketKey = keccak256(abi.encode(lowered, year, loweredRegion));
+        bytes32 marketKey = keccak256(abi.encode(lowered, year, upperRegion));
 
         // Prevent duplicate active proposals for the same (name, year, region)
         if (marketKeyToProposal[marketKey] != bytes32(0)) {
@@ -355,7 +440,7 @@ contract Vault is OwnableRoles {
         ProposalStorage storage prop = proposals[proposalId];
         prop.questionId = questionId;
         prop.oracle = defaultOracle;
-        prop.metadata = abi.encode(lowered, year, loweredRegion);
+        prop.metadata = abi.encode(lowered, year, upperRegion);
         prop.outcomeNames = outcomeNames;
         prop.launchThreshold = defaultLaunchThreshold;
         prop.deadline = deadline;
@@ -363,12 +448,12 @@ contract Vault is OwnableRoles {
         prop.totalPerOutcome = new uint256[](2);
         prop.name = lowered;
         prop.year = year;
-        prop.region = loweredRegion;
+        prop.region = upperRegion;
 
         marketKeyToProposal[marketKey] = proposalId;
 
         emit ProposalCreated(
-            proposalId, questionId, lowered, year, loweredRegion, msg.sender, defaultLaunchThreshold, deadline
+            proposalId, questionId, lowered, year, upperRegion, msg.sender, defaultLaunchThreshold, deadline
         );
 
         if (amounts.length != 2) revert InvalidAmounts();
@@ -419,7 +504,7 @@ contract Vault is OwnableRoles {
         prop.state = ProposalState.OPEN;
         prop.totalPerOutcome = new uint256[](outcomeNames.length);
         prop.year = year;
-        prop.region = _toLowerCase(region);
+        prop.region = bytes(region).length > 0 ? _toUpperCase(region) : region;
 
         emit ProposalCreated(proposalId, questionId, "", year, prop.region, msg.sender, _threshold, _deadline);
 
@@ -700,7 +785,8 @@ contract Vault is OwnableRoles {
     }
 
     function getMarketKey(string calldata name, uint16 year, string calldata region) external pure returns (bytes32) {
-        return keccak256(abi.encode(_toLowerCase(name), year, _toLowerCase(region)));
+        string memory upperRegion = bytes(region).length > 0 ? _toUpperCase(region) : region;
+        return keccak256(abi.encode(_toLowerCase(name), year, upperRegion));
     }
 
     function getProposalByMarketKey(string calldata name, uint16 year, string calldata region)
@@ -708,7 +794,8 @@ contract Vault is OwnableRoles {
         view
         returns (bytes32)
     {
-        bytes32 key = keccak256(abi.encode(_toLowerCase(name), year, _toLowerCase(region)));
+        string memory upperRegion = bytes(region).length > 0 ? _toUpperCase(region) : region;
+        bytes32 key = keccak256(abi.encode(_toLowerCase(name), year, upperRegion));
         return marketKeyToProposal[key];
     }
 
@@ -725,5 +812,18 @@ contract Vault is OwnableRoles {
             }
         }
         return string(bLower);
+    }
+
+    function _toUpperCase(string memory str) internal pure returns (string memory) {
+        bytes memory bStr = bytes(str);
+        bytes memory bUpper = new bytes(bStr.length);
+        for (uint256 i; i < bStr.length; i++) {
+            if (bStr[i] >= 0x61 && bStr[i] <= 0x7A) {
+                bUpper[i] = bytes1(uint8(bStr[i]) - 32);
+            } else {
+                bUpper[i] = bStr[i];
+            }
+        }
+        return string(bUpper);
     }
 }
