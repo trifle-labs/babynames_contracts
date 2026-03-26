@@ -1,7 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 
-const abi = require("./abi/BabyNameMarket.json");
+const PredictionMarketABI = require("./abi/PredictionMarket.json");
+const VaultABI = require("./abi/Vault.json");
+const OutcomeTokenABI = require("./abi/OutcomeToken.json");
+const RewardDistributorABI = require("./abi/RewardDistributor.json");
 
 function getDeployment(chainId) {
   const filePath = path.join(__dirname, "deployments", `${chainId}.json`);
@@ -14,6 +17,15 @@ const CHAIN_IDS = {
   sepolia: 11155111,
   base: 8453,
   baseSepolia: 84532,
+  tempo: 4217,
+  tempoTestnet: 42431,
 };
 
-module.exports = { abi, getDeployment, CHAIN_IDS };
+module.exports = {
+  PredictionMarketABI,
+  VaultABI,
+  OutcomeTokenABI,
+  RewardDistributorABI,
+  getDeployment,
+  CHAIN_IDS,
+};

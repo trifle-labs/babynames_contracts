@@ -1,7 +1,7 @@
 {
   "name": "@trifle-labs/babynames-contracts",
   "version": "0.1.0",
-  "description": "BabyNameMarket prediction market contracts - ABIs and deployment addresses",
+  "description": "Trifle prediction market contracts (LMSR) - ABIs and deployment addresses",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
