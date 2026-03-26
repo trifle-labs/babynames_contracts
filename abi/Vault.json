@@ -13,6 +13,11 @@
         "internalType": "address"
       },
       {
+        "name": "_feeSource",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "_defaultOracle",
         "type": "address",
         "internalType": "address"
@@ -53,6 +58,16 @@
         "name": "metadata",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "internalType": "string"
       },
       {
         "name": "launchThreshold",
@@ -135,6 +150,32 @@
   },
   {
     "type": "function",
+    "name": "claimShares",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "closeYear",
+    "inputs": [
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "commit",
     "inputs": [
       {
@@ -205,6 +246,19 @@
   },
   {
     "type": "function",
+    "name": "feeSource",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCommitted",
     "inputs": [
       {
@@ -229,27 +283,32 @@
   },
   {
     "type": "function",
-    "name": "getLocked",
+    "name": "getMarketKey",
     "inputs": [
       {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
       },
       {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [
       {
         "name": "",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -326,6 +385,26 @@
             "name": "name",
             "type": "string",
             "internalType": "string"
+          },
+          {
+            "name": "year",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "region",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "actualCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalSharesPerOutcome",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
           }
         ]
       }
@@ -334,10 +413,20 @@
   },
   {
     "type": "function",
-    "name": "getProposalByName",
+    "name": "getProposalByMarketKey",
     "inputs": [
       {
         "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "region",
         "type": "string",
         "internalType": "string"
       }
@@ -419,6 +508,30 @@
   },
   {
     "type": "function",
+    "name": "hasClaimed",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isValidName",
     "inputs": [
       {
@@ -456,36 +569,7 @@
   },
   {
     "type": "function",
-    "name": "locked",
-    "inputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nameToProposal",
+    "name": "marketKeyToProposal",
     "inputs": [
       {
         "name": "",
@@ -514,6 +598,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openYear",
+    "inputs": [
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -585,6 +682,50 @@
     "inputs": [
       {
         "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "amounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeRegional",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "region",
         "type": "string",
         "internalType": "string"
       },
@@ -713,6 +854,19 @@
   },
   {
     "type": "function",
+    "name": "setFeeSource",
+    "inputs": [
+      {
+        "name": "_feeSource",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setNamesMerkleRoot",
     "inputs": [
       {
@@ -778,19 +932,6 @@
   },
   {
     "type": "function",
-    "name": "unlock",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "usdc",
     "inputs": [],
     "outputs": [
@@ -832,6 +973,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "yearOpen",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -939,6 +1099,25 @@
       },
       {
         "name": "newOracle",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FeeSourceUpdated",
+    "inputs": [
+      {
+        "name": "oldSource",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newSource",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1090,6 +1269,18 @@
         "internalType": "string"
       },
       {
+        "name": "year",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
         "name": "proposer",
         "type": "address",
         "indexed": false,
@@ -1150,6 +1341,37 @@
   },
   {
     "type": "event",
+    "name": "SharesClaimed",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "shares",
+        "type": "uint256[]",
+        "indexed": false,
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "refund",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SurplusRecipientUpdated",
     "inputs": [
       {
@@ -1169,28 +1391,34 @@
   },
   {
     "type": "event",
-    "name": "Unlocked",
+    "name": "YearClosed",
     "inputs": [
       {
-        "name": "marketId",
-        "type": "bytes32",
+        "name": "year",
+        "type": "uint16",
         "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amounts",
-        "type": "uint256[]",
-        "indexed": false,
-        "internalType": "uint256[]"
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "YearOpened",
+    "inputs": [
+      {
+        "name": "year",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyClaimed",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1214,12 +1442,7 @@
   },
   {
     "type": "error",
-    "name": "DuplicateName",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientVaultBalance",
+    "name": "DuplicateMarketKey",
     "inputs": []
   },
   {
@@ -1254,7 +1477,7 @@
   },
   {
     "type": "error",
-    "name": "MarketNotResolved",
+    "name": "InvalidYear",
     "inputs": []
   },
   {
@@ -1269,7 +1492,7 @@
   },
   {
     "type": "error",
-    "name": "NoLockedTokens",
+    "name": "NotLaunched",
     "inputs": []
   },
   {
@@ -1305,6 +1528,11 @@
   {
     "type": "error",
     "name": "Unauthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "YearNotOpen",
     "inputs": []
   },
   {

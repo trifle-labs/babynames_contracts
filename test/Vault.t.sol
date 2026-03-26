@@ -21,6 +21,7 @@ contract VaultTest is Test {
 
     address oracle = address(0xBEEF);
     address treasury = address(0xCAFE);
+    address feeSource = address(0xFEE);
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
 
@@ -39,17 +40,23 @@ contract VaultTest is Test {
         vault = new Vault(
             address(pm),
             treasury,        // surplusRecipient
+            feeSource,       // feeSource
             oracle,          // defaultOracle
             20e6,            // defaultLaunchThreshold ($20)
             7 days,          // defaultDeadlineDuration
             address(this)    // owner
         );
 
+        // Open the default year for proposals
+        vault.openYear(2025);
+
         // Grant vault the MARKET_CREATOR_ROLE
         pm.grantMarketCreatorRole(address(vault));
 
-        // Fund vault for creation fees
-        usdc.mint(address(vault), 1000e6);
+        // Fund feeSource and approve vault from feeSource
+        usdc.mint(feeSource, 1000e6);
+        vm.prank(feeSource);
+        usdc.approve(address(vault), type(uint256).max);
 
         // Fund users
         usdc.mint(alice, 10_000e6);
@@ -64,7 +71,7 @@ contract VaultTest is Test {
 
     // ========== HELPERS ==========
 
-    function _proposeAsAlice(string memory _name, uint256 yesAmt, uint256 noAmt)
+    function _proposeAsAlice(string memory _name, uint16 year, uint256 yesAmt, uint256 noAmt)
         internal
         returns (bytes32 proposalId)
     {
@@ -73,7 +80,7 @@ contract VaultTest is Test {
         amounts[1] = noAmt;
         bytes32[] memory proof = new bytes32[](0);
         vm.prank(alice);
-        proposalId = vault.propose(_name, proof, amounts);
+        proposalId = vault.propose(_name, year, proof, amounts);
     }
 
     function _commitAsBob(bytes32 proposalId, uint256 yesAmt, uint256 noAmt) internal {
@@ -90,7 +97,7 @@ contract VaultTest is Test {
         uint256 aliceBefore = usdc.balanceOf(alice);
         uint256 vaultBefore = usdc.balanceOf(address(vault));
 
-        bytes32 proposalId = _proposeAsAlice("Olivia", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
 
         Vault.ProposalInfo memory info = vault.getProposal(proposalId);
         assertEq(info.outcomeNames.length, 2);
@@ -103,6 +110,7 @@ contract VaultTest is Test {
         assertEq(info.launchThreshold, 20e6);
         assertEq(info.oracle, oracle);
         assertEq(info.name, "olivia"); // lowercased
+        assertEq(info.year, 2025);
         assertEq(info.committers.length, 1);
         assertEq(info.committers[0], alice);
 
@@ -131,13 +139,13 @@ contract VaultTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(Vault.InvalidName.selector);
-        vault.propose("Olivia", emptyProof, amounts);
+        vault.propose("Olivia", 2025, emptyProof, amounts);
     }
 
     // ========== 3. COMMIT ==========
 
     function test_commit_multipleUsersAccumulate() public {
-        bytes32 proposalId = _proposeAsAlice("Emma", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Emma", 2025, 5e6, 5e6);
 
         // Bob commits
         _commitAsBob(proposalId, 3e6, 7e6);
@@ -164,7 +172,7 @@ contract VaultTest is Test {
     // ========== 4. LAUNCH MARKET ==========
 
     function test_launchMarket_createsMarketOnPredictionMarket() public {
-        bytes32 proposalId = _proposeAsAlice("Liam", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Liam", 2025, 5e6, 5e6);
         _commitAsBob(proposalId, 5e6, 5e6);
 
         // Total is 20e6 which meets threshold
@@ -180,19 +188,24 @@ contract VaultTest is Test {
         assertEq(mInfo.outcomeTokens.length, 2);
         assertFalse(mInfo.resolved);
 
-        // Both users have locked tokens
-        uint256[] memory aliceLocked = vault.getLocked(info.marketId, alice);
-        uint256[] memory bobLocked = vault.getLocked(info.marketId, bob);
-        assertEq(aliceLocked.length, 2);
-        assertEq(bobLocked.length, 2);
+        // Both users claim shares after launch
+        vm.prank(alice);
+        vault.claimShares(proposalId);
+        vm.prank(bob);
+        vault.claimShares(proposalId);
 
-        // Both committed equally so should have equal locked shares
-        assertEq(aliceLocked[0], bobLocked[0]);
-        assertEq(aliceLocked[1], bobLocked[1]);
+        uint256 aliceYes = IERC20(mInfo.outcomeTokens[0]).balanceOf(alice);
+        uint256 aliceNo = IERC20(mInfo.outcomeTokens[1]).balanceOf(alice);
+        uint256 bobYes = IERC20(mInfo.outcomeTokens[0]).balanceOf(bob);
+        uint256 bobNo = IERC20(mInfo.outcomeTokens[1]).balanceOf(bob);
+
+        // Both committed equally so should have equal shares
+        assertEq(aliceYes, bobYes);
+        assertEq(aliceNo, bobNo);
     }
 
     function test_launchMarket_belowThresholdReverts() public {
-        bytes32 proposalId = _proposeAsAlice("Noah", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Noah", 2025, 5e6, 5e6);
         // Only 10e6 committed, threshold is 20e6
 
         vm.expectRevert(Vault.BelowThreshold.selector);
@@ -204,34 +217,43 @@ contract VaultTest is Test {
     function test_samePriceGuarantee_shareRatioMatchesUsdcRatio() public {
         // Alice and Bob both commit to YES with different amounts
         // Share ratio should match USDC ratio
-        bytes32 proposalId = _proposeAsAlice("Sophia", 8e6, 2e6);
+        bytes32 proposalId = _proposeAsAlice("Sophia", 2025, 8e6, 2e6);
         _commitAsBob(proposalId, 4e6, 6e6);
 
         // Total: YES=12e6, NO=8e6, total=20e6 => meets threshold
         vault.launchMarket(proposalId);
 
         Vault.ProposalInfo memory info = vault.getProposal(proposalId);
-        uint256[] memory aliceLocked = vault.getLocked(info.marketId, alice);
-        uint256[] memory bobLocked = vault.getLocked(info.marketId, bob);
+        PredictionMarket.MarketInfo memory mInfo = pm.getMarketInfo(info.marketId);
+
+        // Claim shares for both users
+        vm.prank(alice);
+        vault.claimShares(proposalId);
+        vm.prank(bob);
+        vault.claimShares(proposalId);
+
+        uint256 aliceYes = IERC20(mInfo.outcomeTokens[0]).balanceOf(alice);
+        uint256 aliceNo = IERC20(mInfo.outcomeTokens[1]).balanceOf(alice);
+        uint256 bobYes = IERC20(mInfo.outcomeTokens[0]).balanceOf(bob);
+        uint256 bobNo = IERC20(mInfo.outcomeTokens[1]).balanceOf(bob);
 
         // For YES outcome: alice committed 8e6, bob committed 4e6 (ratio 2:1)
         // So alice should have 2x bob's YES shares
-        if (bobLocked[0] > 0) {
-            // aliceLocked[0] / bobLocked[0] should be ~2
-            // Use cross-multiplication to avoid rounding: aliceLocked[0] * 1 ~= bobLocked[0] * 2
-            assertApproxEqAbs(aliceLocked[0] * 1, bobLocked[0] * 2, 1);
+        if (bobYes > 0) {
+            // aliceYes * 1 ~= bobYes * 2
+            assertApproxEqAbs(aliceYes * 1, bobYes * 2, 1);
         }
 
         // For NO outcome: alice committed 2e6, bob committed 6e6 (ratio 1:3)
-        if (aliceLocked[1] > 0) {
-            assertApproxEqAbs(aliceLocked[1] * 3, bobLocked[1] * 1, 1);
+        if (aliceNo > 0) {
+            assertApproxEqAbs(aliceNo * 3, bobNo * 1, 1);
         }
     }
 
     // ========== 6. WITHDRAW COMMITMENT ==========
 
     function test_withdrawCommitment_afterExpiry() public {
-        bytes32 proposalId = _proposeAsAlice("Charlotte", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Charlotte", 2025, 5e6, 5e6);
 
         uint256 aliceBefore = usdc.balanceOf(alice);
 
@@ -255,7 +277,7 @@ contract VaultTest is Test {
     }
 
     function test_withdrawCommitment_beforeExpiryReverts() public {
-        bytes32 proposalId = _proposeAsAlice("Charlotte", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Charlotte", 2025, 5e6, 5e6);
 
         vm.prank(alice);
         vm.expectRevert(Vault.NotWithdrawable.selector);
@@ -265,7 +287,7 @@ contract VaultTest is Test {
     // ========== 7. CANCEL PROPOSAL ==========
 
     function test_cancelProposal_ownerCancelsUsersWithdraw() public {
-        bytes32 proposalId = _proposeAsAlice("Amelia", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Amelia", 2025, 5e6, 5e6);
         _commitAsBob(proposalId, 3e6, 2e6);
 
         uint256 aliceBefore = usdc.balanceOf(alice);
@@ -289,7 +311,7 @@ contract VaultTest is Test {
     }
 
     function test_cancelProposal_nonOwnerReverts() public {
-        bytes32 proposalId = _proposeAsAlice("Amelia", 5e6, 5e6);
+        bytes32 proposalId = _proposeAsAlice("Amelia", 2025, 5e6, 5e6);
 
         vm.prank(alice);
         vm.expectRevert();
@@ -299,8 +321,8 @@ contract VaultTest is Test {
     // ========== 8. CLAIM REFUND ==========
 
     function test_claimRefund_afterLaunchUnspentRefundable() public {
-        // Create a proposal with asymmetric bets to generate unspent USDC
-        bytes32 proposalId = _proposeAsAlice("Harper", 10e6, 10e6);
+        // Create a proposal with symmetric bets to generate unspent USDC
+        bytes32 proposalId = _proposeAsAlice("Harper", 2025, 10e6, 10e6);
         _commitAsBob(proposalId, 10e6, 10e6);
 
         // Total = 40e6, threshold = 20e6
@@ -308,6 +330,12 @@ contract VaultTest is Test {
         uint256 bobBefore = usdc.balanceOf(bob);
 
         vault.launchMarket(proposalId);
+
+        // Users must claimShares first to get refunds credited
+        vm.prank(alice);
+        vault.claimShares(proposalId);
+        vm.prank(bob);
+        vault.claimShares(proposalId);
 
         // Check if there are pending refunds
         uint256 aliceRefund = vault.pendingRefunds(alice);
@@ -337,10 +365,10 @@ contract VaultTest is Test {
         vault.claimRefund();
     }
 
-    // ========== 9. UNLOCK ==========
+    // ========== 9. CLAIM SHARES AND REDEEM ==========
 
-    function test_unlock_afterResolutionTransfersTokens() public {
-        bytes32 proposalId = _proposeAsAlice("Evelyn", 10e6, 10e6);
+    function test_claimShares_afterLaunchThenRedeem() public {
+        bytes32 proposalId = _proposeAsAlice("Evelyn", 2025, 10e6, 10e6);
         _commitAsBob(proposalId, 10e6, 10e6);
 
         vault.launchMarket(proposalId);
@@ -349,8 +377,17 @@ contract VaultTest is Test {
         bytes32 marketId = info.marketId;
         PredictionMarket.MarketInfo memory mInfo = pm.getMarketInfo(marketId);
 
-        uint256[] memory aliceLocked = vault.getLocked(marketId, alice);
-        assertTrue(aliceLocked[0] > 0 || aliceLocked[1] > 0, "alice should have locked tokens");
+        // Alice claims shares (tokens go directly to her wallet)
+        vm.prank(alice);
+        vault.claimShares(proposalId);
+
+        uint256 aliceYes = IERC20(mInfo.outcomeTokens[0]).balanceOf(alice);
+        uint256 aliceNo = IERC20(mInfo.outcomeTokens[1]).balanceOf(alice);
+        assertTrue(aliceYes > 0 || aliceNo > 0, "alice should have tokens after claimShares");
+
+        // Verify hasClaimed
+        assertTrue(vault.hasClaimed(proposalId, alice), "alice should be marked as claimed");
+        assertFalse(vault.hasClaimed(proposalId, bob), "bob should not be marked as claimed yet");
 
         // Resolve market: YES wins (100% payout to outcome 0)
         uint256[] memory payoutPcts = new uint256[](2);
@@ -359,49 +396,38 @@ contract VaultTest is Test {
         vm.prank(oracle);
         pm.resolveMarketWithPayoutSplit(marketId, payoutPcts);
 
-        // Alice unlocks
-        uint256 aliceYesBefore = IERC20(mInfo.outcomeTokens[0]).balanceOf(alice);
-        uint256 aliceNoBefore = IERC20(mInfo.outcomeTokens[1]).balanceOf(alice);
-
-        vm.prank(alice);
-        vault.unlock(marketId);
-
-        // Alice received her locked tokens
-        uint256 aliceYesAfter = IERC20(mInfo.outcomeTokens[0]).balanceOf(alice);
-        uint256 aliceNoAfter = IERC20(mInfo.outcomeTokens[1]).balanceOf(alice);
-        assertEq(aliceYesAfter - aliceYesBefore, aliceLocked[0]);
-        assertEq(aliceNoAfter - aliceNoBefore, aliceLocked[1]);
-
-        // Locked amounts cleared
-        uint256[] memory aliceLockedAfter = vault.getLocked(marketId, alice);
-        assertEq(aliceLockedAfter.length, 0);
-
         // Alice can now redeem YES tokens on PredictionMarket
-        if (aliceLocked[0] > 0) {
+        if (aliceYes > 0) {
             vm.prank(alice);
-            IERC20(mInfo.outcomeTokens[0]).approve(address(pm), aliceLocked[0]);
+            IERC20(mInfo.outcomeTokens[0]).approve(address(pm), aliceYes);
             vm.prank(alice);
-            pm.redeem(mInfo.outcomeTokens[0], aliceLocked[0]);
+            pm.redeem(mInfo.outcomeTokens[0], aliceYes);
         }
     }
 
-    function test_unlock_beforeResolutionReverts() public {
-        bytes32 proposalId = _proposeAsAlice("Mia", 10e6, 10e6);
+    function test_claimShares_beforeLaunchReverts() public {
+        bytes32 proposalId = _proposeAsAlice("Mia", 2025, 10e6, 10e6);
+        _commitAsBob(proposalId, 10e6, 10e6);
+
+        // Don't launch — try to claim
+        vm.prank(alice);
+        vm.expectRevert(Vault.NotLaunched.selector);
+        vault.claimShares(proposalId);
+    }
+
+    function test_claimShares_doubleClaimReverts() public {
+        bytes32 proposalId = _proposeAsAlice("Luna", 2025, 10e6, 10e6);
         _commitAsBob(proposalId, 10e6, 10e6);
 
         vault.launchMarket(proposalId);
 
-        Vault.ProposalInfo memory info = vault.getProposal(proposalId);
-
         vm.prank(alice);
-        vm.expectRevert(Vault.MarketNotResolved.selector);
-        vault.unlock(info.marketId);
-    }
+        vault.claimShares(proposalId);
 
-    function test_unlock_noLockedTokensReverts() public {
+        // Second claim should revert
         vm.prank(alice);
-        vm.expectRevert(Vault.NoLockedTokens.selector);
-        vault.unlock(bytes32(uint256(999)));
+        vm.expectRevert(Vault.AlreadyClaimed.selector);
+        vault.claimShares(proposalId);
     }
 
     // ========== 10. ADMIN PROPOSE ==========
@@ -416,6 +442,8 @@ contract VaultTest is Test {
             outcomeNames,
             oracle,
             abi.encode("Top girl name 2026"),
+            2025,                           // year
+            "",                             // region (national)
             50e6,                           // custom threshold
             block.timestamp + 30 days       // custom deadline
         );
@@ -428,7 +456,7 @@ contract VaultTest is Test {
         assertEq(info.launchThreshold, 50e6);
         assertEq(info.oracle, oracle);
         assertEq(uint256(info.state), uint256(Vault.ProposalState.OPEN));
-        assertEq(info.name, ""); // no name for admin proposals
+        assertEq(info.year, 2025);
     }
 
     function test_adminPropose_nonOwnerReverts() public {
@@ -442,6 +470,8 @@ contract VaultTest is Test {
             outcomeNames,
             oracle,
             abi.encode("test"),
+            2025,
+            "",
             20e6,
             block.timestamp + 7 days
         );
@@ -456,8 +486,10 @@ contract VaultTest is Test {
             outcomeNames,
             oracle,
             abi.encode("test"),
-            0,  // use default threshold
-            0   // use default deadline
+            2025,   // year
+            "",     // region
+            0,      // use default threshold
+            0       // use default deadline
         );
 
         Vault.ProposalInfo memory info = vault.getProposal(proposalId);
@@ -465,23 +497,10 @@ contract VaultTest is Test {
         assertEq(info.deadline, block.timestamp + 7 days); // defaultDeadlineDuration
     }
 
-    // ========== 11. DUPLICATE NAME ==========
+    // ========== 11. DUPLICATE MARKET KEY ==========
 
-    function test_duplicateName_revertsWhileActive() public {
-        _proposeAsAlice("Olivia", 5e6, 5e6);
-
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 5e6;
-        amounts[1] = 5e6;
-        bytes32[] memory proof = new bytes32[](0);
-
-        vm.prank(bob);
-        vm.expectRevert(Vault.DuplicateName.selector);
-        vault.propose("Olivia", proof, amounts);
-    }
-
-    function test_duplicateName_caseInsensitive() public {
-        _proposeAsAlice("Olivia", 5e6, 5e6);
+    function test_duplicateMarketKey_revertsWhileActive() public {
+        _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
 
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 5e6;
@@ -489,24 +508,152 @@ contract VaultTest is Test {
         bytes32[] memory proof = new bytes32[](0);
 
         vm.prank(bob);
-        vm.expectRevert(Vault.DuplicateName.selector);
-        vault.propose("olivia", proof, amounts);
+        vm.expectRevert(Vault.DuplicateMarketKey.selector);
+        vault.propose("Olivia", 2025, proof, amounts);
     }
 
-    function test_duplicateName_allowedAfterExpiry() public {
-        _proposeAsAlice("Olivia", 5e6, 5e6);
+    function test_duplicateMarketKey_caseInsensitive() public {
+        _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
+
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(bob);
+        vm.expectRevert(Vault.DuplicateMarketKey.selector);
+        vault.propose("olivia", 2025, proof, amounts);
+    }
+
+    function test_duplicateMarketKey_allowedAfterExpiry() public {
+        bytes32 firstProposalId = _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
 
         // Warp past deadline so original proposal expires
         vm.warp(block.timestamp + 7 days + 1);
 
-        // Now bob can propose the same name
+        // Withdraw to transition state from OPEN -> EXPIRED
+        // (The duplicate check blocks OPEN and LAUNCHED states, so we must
+        //  explicitly expire by calling withdrawCommitment after deadline.)
+        vm.prank(alice);
+        vault.withdrawCommitment(firstProposalId);
+
+        // Now bob can propose the same name+year+region
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 5e6;
         amounts[1] = 5e6;
         bytes32[] memory proof = new bytes32[](0);
 
         vm.prank(bob);
-        bytes32 proposalId = vault.propose("Olivia", proof, amounts);
+        bytes32 proposalId = vault.propose("Olivia", 2025, proof, amounts);
         assertTrue(proposalId != bytes32(0));
+    }
+
+    // ========== 12. SAME NAME DIFFERENT YEAR SUCCEEDS ==========
+
+    function test_sameNameDifferentYear_succeeds() public {
+        vault.openYear(2026);
+
+        _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
+
+        // Same name, different year should succeed
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(bob);
+        bytes32 proposalId = vault.propose("Olivia", 2026, proof, amounts);
+        assertTrue(proposalId != bytes32(0));
+    }
+
+    // ========== 13. SAME NAME DIFFERENT REGION SUCCEEDS ==========
+
+    function test_sameNameDifferentRegion_succeeds() public {
+        _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
+
+        // Same name + year but different region should succeed
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(bob);
+        bytes32 proposalId = vault.proposeRegional("Olivia", 2025, "california", proof, amounts);
+        assertTrue(proposalId != bytes32(0));
+    }
+
+    // ========== 14. YEAR NOT OPEN REVERTS ==========
+
+    function test_propose_yearNotOpenReverts() public {
+        // Year 2030 is not open
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(alice);
+        vm.expectRevert(Vault.YearNotOpen.selector);
+        vault.propose("Olivia", 2030, proof, amounts);
+    }
+
+    // ========== 15. CLOSE YEAR BLOCKS NEW PROPOSALS ==========
+
+    function test_closeYear_blocksNewProposals() public {
+        // 2025 is open from setUp, close it
+        vault.closeYear(2025);
+
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(alice);
+        vm.expectRevert(Vault.YearNotOpen.selector);
+        vault.propose("Olivia", 2025, proof, amounts);
+    }
+
+    // ========== 16. DUPLICATE MARKET KEY BLOCKS LAUNCHED ==========
+
+    function test_duplicateMarketKey_revertsWhileLaunched() public {
+        // Propose and launch
+        bytes32 proposalId = _proposeAsAlice("Olivia", 2025, 10e6, 10e6);
+        vault.launchMarket(proposalId);
+
+        // Same name+year+region should still revert because state is LAUNCHED
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 5e6;
+        amounts[1] = 5e6;
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(bob);
+        vm.expectRevert(Vault.DuplicateMarketKey.selector);
+        vault.propose("Olivia", 2025, proof, amounts);
+    }
+
+    // ========== 17. GET MARKET KEY ==========
+
+    function test_getMarketKey() public view {
+        bytes32 key1 = vault.getMarketKey("Olivia", 2025, "");
+        bytes32 key2 = vault.getMarketKey("olivia", 2025, "");
+        assertEq(key1, key2, "case insensitive market key");
+
+        bytes32 key3 = vault.getMarketKey("Olivia", 2026, "");
+        assertTrue(key1 != key3, "different year = different key");
+
+        bytes32 key4 = vault.getMarketKey("Olivia", 2025, "california");
+        assertTrue(key1 != key4, "different region = different key");
+    }
+
+    // ========== 18. GET PROPOSAL BY MARKET KEY ==========
+
+    function test_getProposalByMarketKey() public {
+        bytes32 proposalId = _proposeAsAlice("Olivia", 2025, 5e6, 5e6);
+
+        bytes32 found = vault.getProposalByMarketKey("Olivia", 2025, "");
+        assertEq(found, proposalId);
+
+        // Case insensitive lookup
+        bytes32 found2 = vault.getProposalByMarketKey("olivia", 2025, "");
+        assertEq(found2, proposalId);
     }
 }

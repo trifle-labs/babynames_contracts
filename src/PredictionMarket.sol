@@ -224,9 +224,10 @@ contract PredictionMarket is OwnableRoles {
         }
 
         // Safety check: fee must cover minFee = targetVig * s / ONE
-        // This is trivially satisfied by construction but kept as a safety invariant
+        // Trivially satisfied by construction (s derived from totalFee), but kept as belt-and-suspenders.
+        // No rounding buffer needed — this is pure integer arithmetic, not LMSR approximation.
         uint256 minFee = FixedPointMathLib.mulDiv(targetVig, derivedShares, ONE);
-        if (totalFee < minFee + COST_ROUNDING_BUFFER) revert InitialFundingInvariantViolation();
+        if (totalFee < minFee) revert InitialFundingInvariantViolation();
 
         if (!usdc.transferFrom(msg.sender, address(this), totalFee)) revert UsdcTransferFailed();
 
