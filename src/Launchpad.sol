@@ -111,6 +111,7 @@ contract Launchpad is OwnableRoles {
         bytes32 marketId;
         uint256[] totalPerOutcome;
         uint256 totalCommitted;
+        uint256 totalFeesCollected;
         address[] committers;
         string name;
         uint16 year;
@@ -129,8 +130,9 @@ contract Launchpad is OwnableRoles {
         uint256 createdAt;
         ProposalState state;
         bytes32 marketId;
-        uint256[] totalPerOutcome;
-        uint256 totalCommitted;
+        uint256[] totalPerOutcome;  // NET per outcome (after fee)
+        uint256 totalCommitted;     // GROSS total committed
+        uint256 totalFeesCollected; // fees separated at commit time
         address[] committers;
         string name;
         uint16 year;
@@ -138,7 +140,8 @@ contract Launchpad is OwnableRoles {
         uint256 actualCost;
         uint256 tradingBudget;
         uint256[] totalSharesPerOutcome;
-        mapping(address => uint256[]) committed;
+        mapping(address => uint256[]) committed;      // NET per user per outcome
+        mapping(address => uint256) committedGross;    // GROSS per user (for full refund)
         mapping(address => bool) hasCommitted;
         mapping(address => bool) claimed;
     }
@@ -610,36 +613,41 @@ contract Launchpad is OwnableRoles {
     }
 
     /**
-     * @dev Takes gross amounts from user via transferFrom. Stores gross amounts in committed
-     *      and totalPerOutcome. Fee is computed at launch time from totalCommitted.
-     *      On expiry/cancel, gross amounts are refunded in full.
+     * @dev Takes gross amounts from user. Fee (5%) is separated immediately:
+     *      - Net amounts stored in committed[user] and totalPerOutcome (for share distribution)
+     *      - Fee accumulated in totalFeesCollected (for phantom shares at launch)
+     *      - Gross stored in committedGross[user] (for full refund on expiry/cancel)
      */
     function _commit(bytes32 proposalId, uint256[] calldata amounts) internal {
         ProposalStorage storage prop = proposals[proposalId];
 
-        uint256 total;
+        uint256 gross;
         if (prop.committed[msg.sender].length == 0) {
             prop.committed[msg.sender] = new uint256[](amounts.length);
         }
 
         for (uint256 i; i < amounts.length; i++) {
             if (amounts[i] == 0) continue;
-            prop.committed[msg.sender][i] += amounts[i];
-            prop.totalPerOutcome[i] += amounts[i];
-            total += amounts[i];
+            uint256 fee = FixedPointMathLib.mulDiv(amounts[i], commitmentFeeBps, 10000);
+            uint256 net = amounts[i] - fee;
+            prop.committed[msg.sender][i] += net;
+            prop.totalPerOutcome[i] += net;
+            prop.totalFeesCollected += fee;
+            gross += amounts[i];
         }
-        if (total == 0) revert InvalidAmounts();
+        if (gross == 0) revert InvalidAmounts();
 
         if (!prop.hasCommitted[msg.sender]) {
             prop.committers.push(msg.sender);
             prop.hasCommitted[msg.sender] = true;
         }
-        prop.totalCommitted += total;
+        prop.totalCommitted += gross;
+        prop.committedGross[msg.sender] += gross;
 
         // Pull gross amount from user to Launchpad
-        if (!usdc.transferFrom(msg.sender, address(this), total)) revert TransferFailed();
+        if (!usdc.transferFrom(msg.sender, address(this), gross)) revert TransferFailed();
 
-        emit Committed(proposalId, msg.sender, amounts, total);
+        emit Committed(proposalId, msg.sender, amounts, gross);
     }
 
     // ========== LAUNCH ==========
@@ -659,14 +667,13 @@ contract Launchpad is OwnableRoles {
         // Check launch eligibility
         {
             bool eligible;
-            if (batchLaunchDate > 0 && prop.deadline <= batchLaunchDate) {
+            uint256 netCommitted = prop.totalCommitted - prop.totalFeesCollected;
+            if (batchLaunchDate > 0 && prop.createdAt < batchLaunchDate) {
                 // Pre-batch proposal: can only launch on or after batch date
                 eligible = block.timestamp >= batchLaunchDate;
             } else {
                 // Post-batch proposal (or batch disabled): threshold OR timeout
-                uint256 net = prop.totalCommitted
-                    - FixedPointMathLib.mulDiv(prop.totalCommitted, commitmentFeeBps, 10000);
-                eligible = net >= postBatchMinThreshold
+                eligible = netCommitted >= postBatchMinThreshold
                     || block.timestamp >= prop.createdAt + postBatchTimeout;
             }
             if (!eligible) revert NotEligibleForLaunch();
@@ -678,10 +685,9 @@ contract Launchpad is OwnableRoles {
         prop.state = ProposalState.LAUNCHED;
 
         uint256 n = prop.outcomeNames.length;
-        uint256 grossCommitted = prop.totalCommitted;
 
-        // Compute fee split
-        uint256 totalFees = FixedPointMathLib.mulDiv(grossCommitted, commitmentFeeBps, 10000);
+        // Fees were already separated at commit time into totalFeesCollected
+        uint256 totalFees = prop.totalFeesCollected;
 
         // Determine creation fee: min(totalFees, maxCreationFee)
         uint256 creationFeeTotal = totalFees > maxCreationFee ? maxCreationFee : totalFees;
@@ -731,8 +737,8 @@ contract Launchpad is OwnableRoles {
             }
 
             if (hasNonZero) {
-                // Standard trade: Launchpad is msg.sender, PM pulls USDC via transferFrom
-                predictionMarket.trade(
+                // Fee-exempt trade: Launchpad already collected 5% commitment fee
+                predictionMarket.tradeRaw(
                     PredictionMarket.Trade({
                         marketId: marketId,
                         deltaShares: deltaShares,
@@ -801,14 +807,13 @@ contract Launchpad is OwnableRoles {
             }
         }
 
-        // Refund is proportional share of unspent trading funds
-        // tradingBudget = USDC available after createMarket; actualCost = USDC spent on trade
-        // unspent = tradingBudget - actualCost
-        uint256 grossCommitted = prop.totalCommitted;
+        // Refund is proportional share of unspent NET trading funds
+        // committed[user] and totalPerOutcome store NET amounts, so userTotal is NET
+        uint256 netCommitted = prop.totalCommitted - prop.totalFeesCollected;
         uint256 refund;
         uint256 unspent = prop.tradingBudget > prop.actualCost ? prop.tradingBudget - prop.actualCost : 0;
-        if (unspent > 0 && userTotal > 0) {
-            refund = FixedPointMathLib.mulDiv(unspent, userTotal, grossCommitted);
+        if (unspent > 0 && userTotal > 0 && netCommitted > 0) {
+            refund = FixedPointMathLib.mulDiv(unspent, userTotal, netCommitted);
             if (refund > 0) pendingRefunds[msg.sender] += refund;
         }
 
@@ -817,19 +822,22 @@ contract Launchpad is OwnableRoles {
 
     // ========== BINARY SEARCH ==========
 
+    /**
+     * @dev Binary search for the largest scalar k such that the raw LMSR cost
+     *      of buying k*totalPerOutcome shares does not exceed the budget.
+     *      Fee-agnostic — uses quoteTrade directly, no fee adjustment needed
+     *      because Launchpad calls tradeRaw (fee-exempt).
+     */
     function _computeAggregateShares(
         PredictionMarket.MarketInfo memory info,
         uint256[] storage totalPerOutcome,
-        uint256 netForTrading
+        uint256 budget
     ) internal view returns (int256[] memory deltaShares) {
         uint256 n = totalPerOutcome.length;
         deltaShares = new int256[](n);
 
         uint256 lo = 0;
         uint256 hi = 2e6;
-
-        // Account for PM trading fee: total user pays = lmsrCost + lmsrCost * feeBps / 10000
-        uint256 tradingFeeBps = predictionMarket.tradingFeeBps();
 
         for (uint256 iter; iter < 64; iter++) {
             uint256 mid = (lo + hi) / 2;
@@ -841,15 +849,9 @@ contract Launchpad is OwnableRoles {
 
             int256 quotedCost = predictionMarket.quoteTrade(info.outcomeQs, info.alpha, deltaShares);
 
-            // Total cost including trading fee
-            uint256 totalCost;
-            if (quotedCost > 0) {
-                uint256 lmsrCost = uint256(quotedCost);
-                uint256 fee = FixedPointMathLib.mulDiv(lmsrCost, tradingFeeBps, 10000);
-                totalCost = lmsrCost + fee;
-            }
-
-            if (totalCost <= netForTrading) {
+            if (quotedCost > 0 && uint256(quotedCost) <= budget) {
+                lo = mid;
+            } else if (quotedCost <= 0) {
                 lo = mid;
             } else {
                 hi = mid;
@@ -879,17 +881,19 @@ contract Launchpad is OwnableRoles {
             prop.state = ProposalState.EXPIRED;
         }
 
+        // Full refund of GROSS amount (including fee portion) since market never launched
+        uint256 gross = prop.committedGross[msg.sender];
+        if (gross == 0) revert NothingToWithdraw();
+
+        // Zero out all tracking
         uint256 n = prop.outcomeNames.length;
-        uint256 total;
         for (uint256 i; i < n; i++) {
-            total += prop.committed[msg.sender][i];
             prop.committed[msg.sender][i] = 0;
         }
-        if (total == 0) revert NothingToWithdraw();
+        prop.committedGross[msg.sender] = 0;
 
-        // Full refund of gross amount (including fee portion) since market never launched
-        if (!usdc.transfer(msg.sender, total)) revert TransferFailed();
-        emit CommitmentWithdrawn(proposalId, msg.sender, total);
+        if (!usdc.transfer(msg.sender, gross)) revert TransferFailed();
+        emit CommitmentWithdrawn(proposalId, msg.sender, gross);
     }
 
     function cancelProposal(bytes32 proposalId) external onlyOwner {
@@ -922,6 +926,7 @@ contract Launchpad is OwnableRoles {
             marketId: prop.marketId,
             totalPerOutcome: prop.totalPerOutcome,
             totalCommitted: prop.totalCommitted,
+            totalFeesCollected: prop.totalFeesCollected,
             committers: prop.committers,
             name: prop.name,
             year: prop.year,

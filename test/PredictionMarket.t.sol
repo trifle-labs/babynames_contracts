@@ -3,6 +3,7 @@ pragma solidity ^0.8.19;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {PredictionMarket} from "../src/PredictionMarket.sol";
 import {OutcomeToken} from "../src/OutcomeToken.sol";
 
@@ -403,7 +404,8 @@ contract PredictionMarketTest is Test {
         int256 lmsrCost = pm.quoteTrade(info.outcomeQs, info.alpha, delta);
         assertTrue(lmsrCost > 0, "buy has positive cost");
 
-        uint256 expectedFee = uint256(lmsrCost) * 300 / 10000; // 3%
+        // Fee formula: fee = lmsrCost * feeBps / (10000 - feeBps)
+        uint256 expectedFee = FixedPointMathLib.mulDiv(uint256(lmsrCost), 300, 10000 - 300);
         uint256 expectedUserPays = uint256(lmsrCost) + expectedFee;
 
         uint256 balBefore = usdc.balanceOf(address(this));
@@ -489,7 +491,8 @@ contract PredictionMarketTest is Test {
         delta[0] = int256(10e6);
         delta[1] = int256(0);
         int256 lmsrCost = pm.quoteTrade(info.outcomeQs, info.alpha, delta);
-        uint256 expectedFee = uint256(lmsrCost) * 500 / 10000;
+        // Fee formula: fee = lmsrCost * feeBps / (10000 - feeBps)
+        uint256 expectedFee = FixedPointMathLib.mulDiv(uint256(lmsrCost), 500, 10000 - 500);
         uint256 expectedUserPays = uint256(lmsrCost) + expectedFee;
 
         uint256 balBefore = usdc.balanceOf(address(this));
@@ -512,7 +515,8 @@ contract PredictionMarketTest is Test {
         delta[0] = int256(10e6);
         delta[1] = int256(0);
         int256 lmsrCost = pm.quoteTrade(info.outcomeQs, info.alpha, delta);
-        uint256 expectedFee = uint256(lmsrCost) * 100 / 10000;
+        // Fee formula: fee = lmsrCost * feeBps / (10000 - feeBps)
+        uint256 expectedFee = FixedPointMathLib.mulDiv(uint256(lmsrCost), 100, 10000 - 100);
         uint256 expectedUserPays = uint256(lmsrCost) + expectedFee;
 
         uint256 balBefore = usdc.balanceOf(address(this));

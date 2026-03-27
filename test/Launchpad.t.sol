@@ -91,18 +91,21 @@ contract LaunchpadTest is Test {
         assertEq(info.outcomeNames[1], "NO");
         assertEq(uint256(info.state), uint256(Launchpad.ProposalState.OPEN));
         assertEq(info.totalCommitted, 10e6); // GROSS amount stored
-        assertEq(info.totalPerOutcome[0], 5e6); // GROSS per outcome
-        assertEq(info.totalPerOutcome[1], 5e6);
+        // totalPerOutcome stores NET amounts (after 5% fee)
+        // 5e6 * 500 / 10000 = 250000 fee per outcome, net = 4750000
+        assertEq(info.totalPerOutcome[0], 4750000); // NET per outcome
+        assertEq(info.totalPerOutcome[1], 4750000);
+        assertEq(info.totalFeesCollected, 500000); // 10e6 * 500 / 10000 = 500000
         assertEq(info.oracle, oracle);
         assertEq(info.name, "olivia"); // lowercased
         assertEq(info.year, 2025);
         assertEq(info.committers.length, 1);
         assertEq(info.committers[0], alice);
 
-        // Check committed amounts for alice (GROSS)
+        // Check committed amounts for alice (NET per outcome)
         uint256[] memory committed = launchpad.getCommitted(proposalId, alice);
-        assertEq(committed[0], 5e6);
-        assertEq(committed[1], 5e6);
+        assertEq(committed[0], 4750000); // NET: 5e6 - 250000
+        assertEq(committed[1], 4750000);
 
         // USDC transferred from alice to launchpad (GROSS amount)
         assertEq(usdc.balanceOf(alice), aliceBefore - 10e6);
@@ -119,8 +122,12 @@ contract LaunchpadTest is Test {
 
         Launchpad.ProposalInfo memory info = launchpad.getProposal(proposalId);
         assertEq(info.totalCommitted, 20e6); // 10 alice + 10 bob (GROSS)
-        assertEq(info.totalPerOutcome[0], 8e6); // 5 + 3
-        assertEq(info.totalPerOutcome[1], 12e6); // 5 + 7
+        // totalPerOutcome is NET: (5e6 + 3e6) * 9500/10000, (5e6 + 7e6) * 9500/10000
+        // Each amount has 5% fee removed: net = amount * 9500 / 10000
+        // Alice: 5e6 -> 4750000, Bob: 3e6 -> 2850000, total YES = 7600000
+        // Alice: 5e6 -> 4750000, Bob: 7e6 -> 6650000, total NO = 11400000
+        assertEq(info.totalPerOutcome[0], 7600000); // NET: 4750000 + 2850000
+        assertEq(info.totalPerOutcome[1], 11400000); // NET: 4750000 + 6650000
         assertEq(info.committers.length, 2);
 
         // Alice commits again
@@ -132,7 +139,8 @@ contract LaunchpadTest is Test {
 
         info = launchpad.getProposal(proposalId);
         assertEq(info.totalCommitted, 22e6);
-        assertEq(info.totalPerOutcome[0], 10e6); // 5 + 3 + 2
+        // NET YES: 7600000 + 1900000 (2e6 * 9500/10000) = 9500000
+        assertEq(info.totalPerOutcome[0], 9500000);
         assertEq(info.committers.length, 2); // alice not duplicated
     }
 

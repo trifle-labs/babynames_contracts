@@ -302,7 +302,10 @@ contract PredictionMarket is OwnableRoles {
                 minPayout: 0,
                 deadline: block.timestamp
             });
-            _trade(initialTrade, msg.sender);
+            int256 cd = _executeTradeCore(initialTrade, msg.sender);
+            if (cd > 0) {
+                if (!usdc.transferFrom(msg.sender, address(this), uint256(cd))) revert UsdcTransferFailed();
+            }
         }
         return marketId;
     }
@@ -445,36 +448,22 @@ contract PredictionMarket is OwnableRoles {
         if (costDelta > 0) costDelta += QUOTE_TRADE_ROUNDING_BUFFER;
     }
 
-    function _trade(Trade memory tradeData, address trader) internal returns (int256 costDelta) {
-        if (!marketExists(tradeData.marketId)) revert MarketDoesNotExist();
+    /**
+     * @dev Core LMSR execution — fee-agnostic. Updates outcomeQs, totalUsdcIn,
+     *      mints/burns tokens. Does NOT transfer USDC — caller handles that.
+     *      Returns the LMSR cost (positive = market receives, negative = market pays).
+     */
+    function _executeTradeCore(Trade memory tradeData, address trader) internal returns (int256 costDelta) {
         MarketInfo storage m = markets[tradeData.marketId];
         if (m.resolved || m.paused) revert InvalidMarketState();
         if (block.timestamp > tradeData.deadline) revert TradeExpired();
 
         costDelta = quoteTrade(m.outcomeQs, m.alpha, tradeData.deltaShares);
 
-        uint256 feeBps = marketTradingFeeBps[tradeData.marketId];
-        if (feeBps == 0) feeBps = tradingFeeBps;
-
-        uint256 fee;
         if (costDelta > 0) {
-            uint256 lmsrCost = uint256(costDelta);
-            fee = FixedPointMathLib.mulDiv(lmsrCost, feeBps, 10000);
-            uint256 userPays = lmsrCost + fee;
-            if (userPays > tradeData.maxCost) revert InsufficientInputAmount();
-            m.totalUsdcIn += lmsrCost;
-            surplus[m.surplusRecipient] += fee;
-            if (!usdc.transferFrom(trader, address(this), userPays)) revert UsdcTransferFailed();
+            m.totalUsdcIn += uint256(costDelta);
         } else if (costDelta < 0) {
-            uint256 lmsrPayout = uint256(-costDelta);
-            fee = FixedPointMathLib.mulDiv(lmsrPayout, feeBps, 10000);
-            uint256 userReceives = lmsrPayout - fee;
-            if (userReceives < tradeData.minPayout) revert InsufficientOutputAmount();
-            m.totalUsdcIn -= lmsrPayout;
-            surplus[m.surplusRecipient] += fee;
-            if (userReceives > 0) {
-                if (!usdc.transfer(trader, userReceives)) revert UsdcTransferFailed();
-            }
+            m.totalUsdcIn -= uint256(-costDelta);
         }
 
         for (uint256 i = 0; i < tradeData.deltaShares.length; i++) {
@@ -488,38 +477,91 @@ contract PredictionMarket is OwnableRoles {
                 OutcomeToken(m.outcomeTokens[i]).burn(trader, sellAmount);
             }
         }
-
-        int256 usdcFlow;
-        if (costDelta > 0) {
-            usdcFlow = int256(uint256(costDelta) + fee);
-        } else if (costDelta < 0) {
-            uint256 lmsrPayout = uint256(-costDelta);
-            uint256 userReceives = lmsrPayout - fee;
-            usdcFlow = -int256(userReceives);
-        }
-
-        emit MarketTraded(tradeData.marketId, trader, m.alpha, usdcFlow, fee, tradeData.deltaShares, m.outcomeQs);
     }
 
     /**
-     * @notice Executes a trade in a prediction market
-     * @dev Mints/burns outcome tokens and transfers USDC based on trade direction
+     * @notice Executes a trade with the trading fee.
+     *         On buys: fee is skimmed from user's gross payment, net goes to LMSR.
+     *         On sells: LMSR payout has fee skimmed, net goes to user.
+     * @dev maxCost is the gross amount the user will pay (including fee).
+     *      minPayout is the minimum net the user will receive (after fee deduction).
      */
     function trade(Trade memory tradeData) external returns (int256) {
-        return _trade(tradeData, msg.sender);
+        return _tradeWithFee(tradeData, msg.sender);
     }
 
     function tradeWithPermit(Trade memory tradeData, PermitArgs calldata permitData) external returns (int256) {
         IERC20Permit(address(usdc)).permit(
-            msg.sender,
-            address(this),
-            permitData.value,
-            permitData.deadline,
-            permitData.v,
-            permitData.r,
-            permitData.s
+            msg.sender, address(this), permitData.value, permitData.deadline,
+            permitData.v, permitData.r, permitData.s
         );
-        return _trade(tradeData, msg.sender);
+        return _tradeWithFee(tradeData, msg.sender);
+    }
+
+    /**
+     * @notice Fee-exempt trade for Launchpad's aggregate bootstrapping trade.
+     *         Callable only by MARKET_CREATOR_ROLE. Pure LMSR, no trading fee.
+     *         maxCost/minPayout apply to raw LMSR amounts.
+     */
+    function tradeRaw(Trade memory tradeData) external onlyRoles(MARKET_CREATOR_ROLE) returns (int256) {
+        if (!marketExists(tradeData.marketId)) revert MarketDoesNotExist();
+
+        int256 costDelta = _executeTradeCore(tradeData, msg.sender);
+
+        // Handle USDC transfers for raw trade
+        if (costDelta > 0) {
+            uint256 lmsrCost = uint256(costDelta);
+            if (lmsrCost > tradeData.maxCost) revert InsufficientInputAmount();
+            if (!usdc.transferFrom(msg.sender, address(this), lmsrCost)) revert UsdcTransferFailed();
+        } else if (costDelta < 0) {
+            uint256 payout = uint256(-costDelta);
+            if (payout < tradeData.minPayout) revert InsufficientOutputAmount();
+            if (payout > 0) {
+                if (!usdc.transfer(msg.sender, payout)) revert UsdcTransferFailed();
+            }
+        }
+
+        emit MarketTraded(tradeData.marketId, msg.sender, markets[tradeData.marketId].alpha,
+            costDelta, 0, tradeData.deltaShares, markets[tradeData.marketId].outcomeQs);
+        return costDelta;
+    }
+
+    function _tradeWithFee(Trade memory tradeData, address trader) internal returns (int256) {
+        if (!marketExists(tradeData.marketId)) revert MarketDoesNotExist();
+        MarketInfo storage m = markets[tradeData.marketId];
+
+        uint256 feeBps = marketTradingFeeBps[tradeData.marketId];
+        if (feeBps == 0) feeBps = tradingFeeBps;
+
+        int256 costDelta = _executeTradeCore(tradeData, trader);
+        uint256 fee;
+
+        if (costDelta > 0) {
+            // BUY: user sends gross, fee skimmed, net covers LMSR cost
+            uint256 lmsrCost = uint256(costDelta);
+            fee = FixedPointMathLib.mulDiv(lmsrCost, feeBps, 10000 - feeBps);
+            uint256 grossCost = lmsrCost + fee;
+            if (grossCost > tradeData.maxCost) revert InsufficientInputAmount();
+            surplus[m.surplusRecipient] += fee;
+            if (!usdc.transferFrom(trader, address(this), grossCost)) revert UsdcTransferFailed();
+        } else if (costDelta < 0) {
+            // SELL: LMSR pays out, fee skimmed, net goes to user
+            uint256 lmsrPayout = uint256(-costDelta);
+            fee = FixedPointMathLib.mulDiv(lmsrPayout, feeBps, 10000);
+            uint256 userReceives = lmsrPayout - fee;
+            if (userReceives < tradeData.minPayout) revert InsufficientOutputAmount();
+            surplus[m.surplusRecipient] += fee;
+            if (userReceives > 0) {
+                if (!usdc.transfer(trader, userReceives)) revert UsdcTransferFailed();
+            }
+        }
+
+        int256 usdcFlow = costDelta > 0
+            ? int256(uint256(costDelta) + fee)
+            : costDelta < 0 ? -int256(uint256(-costDelta) - fee) : int256(0);
+
+        emit MarketTraded(tradeData.marketId, trader, m.alpha, usdcFlow, fee, tradeData.deltaShares, m.outcomeQs);
+        return costDelta;
     }
 
     /**

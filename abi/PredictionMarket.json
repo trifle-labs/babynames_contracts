@@ -1055,6 +1055,52 @@
   },
   {
     "type": "function",
+    "name": "tradeRaw",
+    "inputs": [
+      {
+        "name": "tradeData",
+        "type": "tuple",
+        "internalType": "struct PredictionMarket.Trade",
+        "components": [
+          {
+            "name": "marketId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "deltaShares",
+            "type": "int256[]",
+            "internalType": "int256[]"
+          },
+          {
+            "name": "maxCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minPayout",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "tradeWithPermit",
     "inputs": [
       {

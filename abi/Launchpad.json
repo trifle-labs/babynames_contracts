@@ -451,6 +451,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "totalFeesCollected",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "committers",
             "type": "address[]",
             "internalType": "address[]"
