@@ -3,10 +3,11 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../src/PredictionMarket.sol";
-import "../src/Vault.sol";
+import "../src/Launchpad.sol";
 import "../src/OutcomeToken.sol";
 import "../src/RewardDistributor.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 /// @notice Minimal ERC20 for testnet deployments (open mint)
 contract TestUSDC is ERC20 {
@@ -31,51 +32,58 @@ contract DeployTestnet is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
+        address collateralToken = vm.envOr("COLLATERAL_TOKEN_ADDRESS", address(0));
+        bool deployedTestToken = collateralToken == address(0);
 
         console.log("Deployer:", deployer);
         console.log("Chain ID:", block.chainid);
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Deploy TestUSDC and mint to deployer
-        TestUSDC usdc = new TestUSDC();
-        usdc.mint(deployer, 10_000_000 * 1e6); // 10M tUSDC
-        console.log("TestUSDC:", address(usdc));
+        // 1. Determine collateral token.
+        IERC20 usdc;
+        if (deployedTestToken) {
+            TestUSDC testUsdc = new TestUSDC();
+            testUsdc.mint(deployer, 10_000_000 * 1e6); // 10M tUSDC
+            usdc = IERC20(address(testUsdc));
+            collateralToken = address(testUsdc);
+            console.log("TestUSDC:", collateralToken);
+        } else {
+            usdc = IERC20(collateralToken);
+            console.log("CollateralToken:", collateralToken);
+        }
 
         // 2. Deploy PredictionMarket
         PredictionMarket pm = new PredictionMarket();
-        pm.initialize(address(usdc));
+        pm.initialize(collateralToken);
         // Set market creation fee to $5/outcome
         pm.grantRoles(deployer, pm.PROTOCOL_MANAGER_ROLE());
         pm.setMarketCreationFee(5e6);
         console.log("PredictionMarket:", address(pm));
 
-        // 3. Deploy Vault
+        // 3. Deploy Launchpad
         //    - surplusRecipient = deployer (test treasury)
         //    - defaultOracle = deployer (manual resolution for testing)
-        //    - defaultLaunchThreshold = $20 (low for testing)
         //    - defaultDeadlineDuration = 7 days
-        Vault vault = new Vault(
+        Launchpad vault = new Launchpad(
             address(pm),
             deployer,       // surplusRecipient
-            deployer,       // feeSource
             deployer,       // defaultOracle
-            20e6,           // defaultLaunchThreshold ($20)
             7 days,         // defaultDeadlineDuration
             deployer        // owner
         );
-        console.log("Vault:", address(vault));
+        console.log("Launchpad:", address(vault));
 
-        // 4. Grant Vault the MARKET_CREATOR_ROLE on PredictionMarket
+        // 4. Grant Launchpad the MARKET_CREATOR_ROLE on PredictionMarket
         pm.grantMarketCreatorRole(address(vault));
 
-        // 5. Fund Vault with USDC for market creation fees
-        //    At $5/outcome, fee_min ≈ $0.70, so $100 covers ~140 markets
-        usdc.mint(address(vault), 100e6);
-        console.log("Vault funded with 100 tUSDC for creation fees");
+        // 5. Finalize testnet defaults.
+        vault.seedDefaultRegions();
+        vault.openYear(2025);
+        console.log("Default regions seeded, year 2025 opened");
 
-        // 6. Deploy RewardDistributor
-        RewardDistributor rd = new RewardDistributor(address(usdc), deployer);
+        // 7. Deploy RewardDistributor
+        RewardDistributor rd = new RewardDistributor(collateralToken, deployer);
         console.log("RewardDistributor:", address(rd));
 
         vm.stopBroadcast();
@@ -84,8 +92,9 @@ contract DeployTestnet is Script {
         string memory chainIdStr = vm.toString(block.chainid);
         string memory json = string.concat(
             '{"PredictionMarket":"', vm.toString(address(pm)),
-            '","Vault":"', vm.toString(address(vault)),
-            '","TestUSDC":"', vm.toString(address(usdc)),
+            '","Launchpad":"', vm.toString(address(vault)),
+            '","TestUSDC":"', vm.toString(collateralToken),
+            '","CollateralToken":"', vm.toString(collateralToken),
             '","RewardDistributor":"', vm.toString(address(rd)),
             '","OutcomeTokenImpl":"', vm.toString(pm.outcomeTokenImplementation()),
             '","chainId":', chainIdStr,

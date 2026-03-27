@@ -1,86 +1,155 @@
 #!/bin/bash
-# Deploy prediction market contracts to Tempo testnet (Moderato)
-# Uses forge create + cast send for RPC-based gas estimation (required for Tempo)
-set -e
+# Deploy prediction market contracts to Tempo testnet (Moderato).
+# Native Tempo TIP-20 setup is done post-deploy with `cast send` because
+# `forge script` currently misbehaves when the script itself calls those precompiles.
+set -euo pipefail
 
 source .env
-RPC="https://rpc.moderato.tempo.xyz"
-DEPLOYER=$(cast wallet address --private-key $PRIVATE_KEY)
+
+RPC="${RPC_URL:-https://rpc.moderato.tempo.xyz}"
+SCRIPT="script/DeployTestnet.s.sol:DeployTestnet"
+DEPLOYER=$(cast wallet address --private-key "$PRIVATE_KEY")
+AUTO_FUND_FEE_SOURCE="${AUTO_FUND_FEE_SOURCE:-true}"
+OPEN_YEAR="${OPEN_YEAR:-2025}"
+INITIAL_FEE_SOURCE_FUNDS="${INITIAL_FEE_SOURCE_FUNDS:-500000000}"
+CHAIN_ID=$(cast chain-id --rpc-url "$RPC")
+ARTIFACT="deployments/${CHAIN_ID}.json"
+DEFAULT_LAUNCH_THRESHOLD="${DEFAULT_LAUNCH_THRESHOLD:-20000000}"
+DEFAULT_DEADLINE_DURATION="${DEFAULT_DEADLINE_DURATION:-604800}"
+MARKET_CREATION_FEE="${MARKET_CREATION_FEE:-5000000}"
+FEE_SOURCE="${FEE_SOURCE:-$DEPLOYER}"
+PM_GAS_LIMIT="${PM_GAS_LIMIT:-30000000}"
+VAULT_GAS_LIMIT="${VAULT_GAS_LIMIT:-8000000}"
+RD_GAS_LIMIT="${RD_GAS_LIMIT:-5000000}"
+
+echo "Deploying via forge script: $SCRIPT"
+echo "RPC: $RPC"
 echo "Deployer: $DEPLOYER"
-echo "Chain: Tempo Moderato (42431)"
 
-# 1. Deploy TestUSDC
-echo "--- Deploying TestUSDC ---"
-USDC_RESULT=$(forge create script/DeployTestnet.s.sol:TestUSDC \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy --broadcast --json)
-USDC=$(echo $USDC_RESULT | python3 -c "import json,sys; print(json.load(sys.stdin)['deployedTo'])")
-echo "TestUSDC: $USDC"
+if [ "$FEE_SOURCE" != "$DEPLOYER" ]; then
+  echo "FEE_SOURCE_MUST_BE_DEPLOYER for this wrapper" >&2
+  exit 1
+fi
 
-# 2. Mint 10M tUSDC to deployer
-echo "--- Minting 10M tUSDC ---"
-cast send $USDC "mint(address,uint256)" $DEPLOYER 10000000000000 \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+if [ -n "${COLLATERAL_TOKEN_ADDRESS:-}" ] && [ "$AUTO_FUND_FEE_SOURCE" = "true" ]; then
+  echo "Requesting Tempo faucet funding for deployer before external-token deployment..."
+  cast rpc tempo_fundAddress "$DEPLOYER" --rpc-url "$RPC" >/dev/null
+fi
 
-# 3. Deploy PredictionMarket
-echo "--- Deploying PredictionMarket ---"
-PM_RESULT=$(forge create src/PredictionMarket.sol:PredictionMarket \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy --broadcast --json)
-PM=$(echo $PM_RESULT | python3 -c "import json,sys; print(json.load(sys.stdin)['deployedTo'])")
-echo "PredictionMarket: $PM"
+if [ -n "${COLLATERAL_TOKEN_ADDRESS:-}" ]; then
+  echo "Using manual deployment flow for native Tempo collateral."
 
-# 4. Initialize PredictionMarket
-echo "--- Initializing PredictionMarket ---"
-cast send $PM "initialize(address)" $USDC \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+  deploy_contract() {
+    local contract="$1"
+    local gas_limit="$2"
+    shift 2 || true
+    local output
+    local address
+    local code
+    output=$(forge create "$contract" \
+      --broadcast \
+      --gas-limit "$gas_limit" \
+      --rpc-url "$RPC" \
+      --private-key "$PRIVATE_KEY" \
+      "$@")
+    printf '%s\n' "$output" >&2
+    address=$(printf '%s\n' "$output" | awk '/Deployed to:/ {print $3}')
+    if [ -z "$address" ]; then
+      echo "Failed to parse deployed address for $contract" >&2
+      return 1
+    fi
+    code=$(cast code "$address" --rpc-url "$RPC")
+    if [ "$code" = "0x" ]; then
+      echo "Deployment for $contract reported success but no code was found at $address" >&2
+      return 1
+    fi
+    printf '%s\n' "$address"
+  }
 
-# 5. Grant PROTOCOL_MANAGER_ROLE to deployer and set fee
-echo "--- Granting PROTOCOL_MANAGER_ROLE ---"
-cast send $PM "grantRoles(address,uint256)" $DEPLOYER 1 \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+  COLLATERAL="$COLLATERAL_TOKEN_ADDRESS"
 
-echo "--- Setting marketCreationFee to \$5 ---"
-cast send $PM "setMarketCreationFee(uint256)" 5000000 \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+  PREDICTION_MARKET=$(deploy_contract src/PredictionMarket.sol:PredictionMarket "$PM_GAS_LIMIT")
+  cast send "$PREDICTION_MARKET" "initialize(address)" "$COLLATERAL" --rpc-url "$RPC" --private-key "$PRIVATE_KEY" >/dev/null
+  cast send "$PREDICTION_MARKET" "grantRoles(address,uint256)" "$DEPLOYER" 1 --rpc-url "$RPC" --private-key "$PRIVATE_KEY" >/dev/null
+  cast send "$PREDICTION_MARKET" "setMarketCreationFee(uint256)" "$MARKET_CREATION_FEE" --rpc-url "$RPC" --private-key "$PRIVATE_KEY" >/dev/null
 
-# 6. Deploy Vault (predictionMarket, surplusRecipient, defaultOracle, defaultLaunchThreshold, defaultDeadlineDuration, owner)
-echo "--- Deploying Vault ---"
-VAULT_RESULT=$(forge create src/Vault.sol:Vault \
-  --constructor-args "$PM" "$DEPLOYER" "$DEPLOYER" "20000000" "604800" "$DEPLOYER" \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy --broadcast --json)
-VAULT=$(echo $VAULT_RESULT | python3 -c "import json,sys; print(json.load(sys.stdin)['deployedTo'])")
-echo "Vault: $VAULT"
+  VAULT=$(deploy_contract src/Vault.sol:Vault "$VAULT_GAS_LIMIT" \
+    --constructor-args \
+    "$PREDICTION_MARKET" \
+    "$DEPLOYER" \
+    "$FEE_SOURCE" \
+    "$DEPLOYER" \
+    "$DEFAULT_LAUNCH_THRESHOLD" \
+    "$DEFAULT_DEADLINE_DURATION" \
+    "$DEPLOYER")
 
-# 7. Grant MARKET_CREATOR_ROLE to Vault on PredictionMarket
-echo "--- Granting MARKET_CREATOR_ROLE to Vault ---"
-cast send $PM "grantMarketCreatorRole(address)" $VAULT \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+  cast send "$PREDICTION_MARKET" "grantMarketCreatorRole(address)" "$VAULT" --rpc-url "$RPC" --private-key "$PRIVATE_KEY" >/dev/null
+  cast send "$PREDICTION_MARKET" "grantEscrowManagerRole(address)" "$VAULT" --rpc-url "$RPC" --private-key "$PRIVATE_KEY" >/dev/null
 
-# 8. Fund Vault with tUSDC for market creation fees
-echo "--- Funding Vault with 100 tUSDC ---"
-cast send $USDC "mint(address,uint256)" $VAULT 100000000 \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy
+  REWARD_DISTRIBUTOR=$(deploy_contract src/RewardDistributor.sol:RewardDistributor "$RD_GAS_LIMIT" \
+    --constructor-args \
+    "$COLLATERAL" \
+    "$DEPLOYER")
 
-# 9. Deploy RewardDistributor
-echo "--- Deploying RewardDistributor ---"
-RD_RESULT=$(forge create src/RewardDistributor.sol:RewardDistributor \
-  --constructor-args $USDC $DEPLOYER \
-  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy --broadcast --json)
-RD=$(echo $RD_RESULT | python3 -c "import json,sys; print(json.load(sys.stdin)['deployedTo'])")
-echo "RewardDistributor: $RD"
-
-# Get OutcomeToken implementation address
-OT_IMPL=$(cast call $PM "outcomeTokenImplementation()(address)" --rpc-url $RPC)
-
-# Write deployment artifact
-echo "--- Writing deployment artifact ---"
-cat > deployments/42431.json << EOF
-{"PredictionMarket":"$PM","Vault":"$VAULT","TestUSDC":"$USDC","RewardDistributor":"$RD","OutcomeTokenImpl":"$OT_IMPL","chainId":42431,"deployer":"$DEPLOYER","oracle":"$DEPLOYER","surplusRecipient":"$DEPLOYER"}
+  cat > "$ARTIFACT" <<EOF
+{"PredictionMarket":"$PREDICTION_MARKET","Vault":"$VAULT","TestUSDC":"$COLLATERAL","CollateralToken":"$COLLATERAL","RewardDistributor":"$REWARD_DISTRIBUTOR","chainId":$CHAIN_ID,"deployer":"$DEPLOYER","oracle":"$DEPLOYER","surplusRecipient":"$DEPLOYER"}
 EOF
+else
+  forge script "$SCRIPT" \
+    --rpc-url "$RPC" \
+    --private-key "$PRIVATE_KEY" \
+    --broadcast
+fi
+
+if [ ! -f "$ARTIFACT" ]; then
+  echo "Missing deployment artifact: $ARTIFACT" >&2
+  exit 1
+fi
+
+VAULT=$(python3 - <<PY
+import json
+with open("$ARTIFACT") as f:
+    print(json.load(f)["Vault"])
+PY
+)
+
+COLLATERAL=$(python3 - <<PY
+import json
+with open("$ARTIFACT") as f:
+    data = json.load(f)
+    print(data.get("CollateralToken") or data["TestUSDC"])
+PY
+)
 
 echo ""
-echo "=== Deployment Complete ==="
-echo "TestUSDC:          $USDC"
-echo "PredictionMarket:  $PM"
-echo "Vault:             $VAULT"
-echo "RewardDistributor: $RD"
-echo "OutcomeToken impl: $OT_IMPL"
+echo "--- Post-deploy setup ---"
+echo "Vault: $VAULT"
+echo "Collateral: $COLLATERAL"
+
+if [ -n "${COLLATERAL_TOKEN_ADDRESS:-}" ]; then
+  BALANCE=$(cast call "$COLLATERAL" "balanceOf(address)(uint256)" "$DEPLOYER" --rpc-url "$RPC")
+  echo "Deployer collateral balance: $BALANCE"
+
+  cast send "$COLLATERAL" \
+    "approve(address,uint256)(bool)" \
+    "$VAULT" \
+    "$INITIAL_FEE_SOURCE_FUNDS" \
+    --rpc-url "$RPC" \
+    --private-key "$PRIVATE_KEY" >/dev/null
+
+  ALLOWANCE=$(cast call "$COLLATERAL" "allowance(address,address)(uint256)" "$DEPLOYER" "$VAULT" --rpc-url "$RPC")
+  echo "Vault allowance: $ALLOWANCE"
+fi
+
+if [ "$OPEN_YEAR" != "0" ]; then
+  cast send "$VAULT" \
+    "openYear(uint16)" \
+    "$OPEN_YEAR" \
+    --rpc-url "$RPC" \
+    --private-key "$PRIVATE_KEY" >/dev/null
+  echo "Opened year: $OPEN_YEAR"
+fi
+
+echo ""
+echo "--- Deployment artifact ---"
+cat "$ARTIFACT"

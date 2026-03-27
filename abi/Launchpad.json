@@ -13,19 +13,9 @@
         "internalType": "address"
       },
       {
-        "name": "_feeSource",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "_defaultOracle",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "_defaultLaunchThreshold",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "_defaultDeadlineDuration",
@@ -39,6 +29,19 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "MAX_COMMITMENT_FEE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -83,11 +86,6 @@
         "internalType": "string"
       },
       {
-        "name": "launchThreshold",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
@@ -130,6 +128,19 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "batchLaunchDate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -207,6 +218,69 @@
   },
   {
     "type": "function",
+    "name": "commitWithPermit",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "permitData",
+        "type": "tuple",
+        "internalType": "struct Launchpad.PermitArgs",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "commitmentFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "completeOwnershipHandover",
     "inputs": [
       {
@@ -233,19 +307,6 @@
   },
   {
     "type": "function",
-    "name": "defaultLaunchThreshold",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "defaultOracle",
     "inputs": [],
     "outputs": [
@@ -259,13 +320,13 @@
   },
   {
     "type": "function",
-    "name": "feeSource",
+    "name": "defaultRegionsSeeded",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "address",
-        "internalType": "address"
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -337,7 +398,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct Vault.ProposalInfo",
+        "internalType": "struct Launchpad.ProposalInfo",
         "components": [
           {
             "name": "questionId",
@@ -360,19 +421,19 @@
             "internalType": "string[]"
           },
           {
-            "name": "launchThreshold",
+            "name": "deadline",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "deadline",
+            "name": "createdAt",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
             "name": "state",
             "type": "uint8",
-            "internalType": "enum Vault.ProposalState"
+            "internalType": "enum Launchpad.ProposalState"
           },
           {
             "name": "marketId",
@@ -411,6 +472,11 @@
           },
           {
             "name": "actualCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tradingBudget",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -620,6 +686,19 @@
   },
   {
     "type": "function",
+    "name": "maxCreationFee",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "namesMerkleRoot",
     "inputs": [],
     "outputs": [
@@ -686,6 +765,32 @@
         "internalType": "address"
       }
     ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "postBatchMinThreshold",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "postBatchTimeout",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -783,6 +888,72 @@
   },
   {
     "type": "function",
+    "name": "proposeWithPermit",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "year",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "amounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "permitData",
+        "type": "tuple",
+        "internalType": "struct Launchpad.PermitArgs",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "removeRegion",
     "inputs": [
       {
@@ -860,10 +1031,17 @@
   },
   {
     "type": "function",
-    "name": "setDefaultDeadlineDuration",
+    "name": "seedDefaultRegions",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBatchLaunchDate",
     "inputs": [
       {
-        "name": "_duration",
+        "name": "_date",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -873,10 +1051,23 @@
   },
   {
     "type": "function",
-    "name": "setDefaultLaunchThreshold",
+    "name": "setCommitmentFeeBps",
     "inputs": [
       {
-        "name": "_threshold",
+        "name": "_bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDefaultDeadlineDuration",
+    "inputs": [
+      {
+        "name": "_duration",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -899,12 +1090,12 @@
   },
   {
     "type": "function",
-    "name": "setFeeSource",
+    "name": "setMaxCreationFee",
     "inputs": [
       {
-        "name": "_feeSource",
-        "type": "address",
-        "internalType": "address"
+        "name": "_maxFee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -918,6 +1109,32 @@
         "name": "_root",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPostBatchMinThreshold",
+    "inputs": [
+      {
+        "name": "_threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPostBatchTimeout",
+    "inputs": [
+      {
+        "name": "_timeout",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -1059,6 +1276,44 @@
   },
   {
     "type": "event",
+    "name": "BatchLaunchDateUpdated",
+    "inputs": [
+      {
+        "name": "oldDate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newDate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CommitmentFeeBpsUpdated",
+    "inputs": [
+      {
+        "name": "oldBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CommitmentWithdrawn",
     "inputs": [
       {
@@ -1134,25 +1389,6 @@
   },
   {
     "type": "event",
-    "name": "DefaultLaunchThresholdUpdated",
-    "inputs": [
-      {
-        "name": "oldThreshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newThreshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "DefaultOracleUpdated",
     "inputs": [
       {
@@ -1172,21 +1408,8 @@
   },
   {
     "type": "event",
-    "name": "FeeSourceUpdated",
-    "inputs": [
-      {
-        "name": "oldSource",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newSource",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
+    "name": "DefaultRegionsSeeded",
+    "inputs": [],
     "anonymous": false
   },
   {
@@ -1212,7 +1435,38 @@
         "internalType": "uint256"
       },
       {
+        "name": "feesUsedForCreation",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "excessFees",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "committerCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxCreationFeeUpdated",
+    "inputs": [
+      {
+        "name": "oldFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newFee",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1299,6 +1553,44 @@
   },
   {
     "type": "event",
+    "name": "PostBatchMinThresholdUpdated",
+    "inputs": [
+      {
+        "name": "oldThreshold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newThreshold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PostBatchTimeoutUpdated",
+    "inputs": [
+      {
+        "name": "oldTimeout",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newTimeout",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProposalCancelled",
     "inputs": [
       {
@@ -1349,12 +1641,6 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "launchThreshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       },
       {
         "name": "deadline",
@@ -1527,12 +1813,22 @@
   },
   {
     "type": "error",
+    "name": "DefaultRegionsAlreadySeeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DefaultsNotSet",
     "inputs": []
   },
   {
     "type": "error",
     "name": "DuplicateMarketKey",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeTooHigh",
     "inputs": []
   },
   {
@@ -1567,11 +1863,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidThreshold",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidYear",
     "inputs": []
   },
@@ -1583,6 +1874,11 @@
   {
     "type": "error",
     "name": "NoHandoverRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotEligibleForLaunch",
     "inputs": []
   },
   {

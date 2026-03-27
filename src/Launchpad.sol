@@ -3,6 +3,7 @@
 pragma solidity ^0.8.19;
 
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {OwnableRoles} from "solady/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
@@ -10,7 +11,7 @@ import {MerkleProofLib} from "solady/utils/MerkleProofLib.sol";
 import {PredictionMarket} from "./PredictionMarket.sol";
 
 /**
- * @title Vault
+ * @title Launchpad
  * @notice Commitment-based market bootstrapping for baby name prediction markets.
  *
  *         Markets are scoped to (name, year, region). Each combination can only have
@@ -18,16 +19,26 @@ import {PredictionMarket} from "./PredictionMarket.sol";
  *         by the admin before proposals can be created.
  *
  *         Anyone can propose a market for a name in the Merkle tree and commit capital.
- *         Once commitments cross the launch threshold, anyone can trigger market creation.
- *         All committed trades execute simultaneously at the same initial 50/50 prices.
+ *         A 5% commitment fee is collected from all commitments. On launch, fees fund
+ *         phantom shares (market creation fee) and excess goes to Trifle as revenue.
+ *
+ *         Launch eligibility follows two modes:
+ *         - Pre-batch proposals (created before batchLaunchDate): launch on or after batchLaunchDate
+ *         - Post-batch proposals: launch when threshold reached OR timeout expires
  *
  *         After launch, users call claimShares() to receive outcome tokens directly
- *         to their wallet — they can trade freely on PredictionMarket immediately.
- *
- *         Market creation fees are paid from a separate feeSource address, not from
- *         committed user funds.
+ *         to their wallet. If a proposal expires without launching, users get a full
+ *         refund including the fee portion.
  */
-contract Vault is OwnableRoles {
+contract Launchpad is OwnableRoles {
+    struct PermitArgs {
+        uint256 value;
+        uint256 deadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
     PredictionMarket public predictionMarket;
     IERC20 public usdc;
 
@@ -49,16 +60,36 @@ contract Vault is OwnableRoles {
     /// @notice Valid region codes. "" (empty) is always valid (national).
     ///         Prepopulated with all 50 US state abbreviations (uppercased).
     mapping(bytes32 => bool) public validRegions;
+    bool public defaultRegionsSeeded;
 
     // ========== DEFAULT MARKET PARAMS ==========
 
     address public defaultOracle;
-    uint256 public defaultLaunchThreshold;
     uint256 public defaultDeadlineDuration;
     address public surplusRecipient;
 
-    /// @notice Address that pays market creation fees (separate from committed user funds)
-    address public feeSource;
+    // ========== COMMITMENT FEE ==========
+
+    /// @notice Commitment fee in basis points (5% = 500 bps)
+    uint256 public commitmentFeeBps = 500;
+
+    /// @notice Maximum allowed commitment fee (10% = 1000 bps)
+    uint256 public constant MAX_COMMITMENT_FEE_BPS = 1000;
+
+    /// @notice Maximum total creation fee for phantom shares (in USDC, 6 decimals)
+    uint256 public maxCreationFee = 10e6;
+
+    // ========== LAUNCH TRIGGERS ==========
+
+    /// @notice Batch launch date. Proposals created before this date launch ON this date.
+    ///         After this date, proposals use threshold + time rules. 0 = disabled.
+    uint256 public batchLaunchDate;
+
+    /// @notice For post-batch proposals: minimum net commitment to trigger immediate launch
+    uint256 public postBatchMinThreshold = 10e6;
+
+    /// @notice For post-batch proposals: time after proposal creation when it auto-qualifies for launch
+    uint256 public postBatchTimeout = 24 hours;
 
     // ========== PROPOSAL STATE ==========
 
@@ -74,8 +105,8 @@ contract Vault is OwnableRoles {
         address oracle;
         bytes metadata;
         string[] outcomeNames;
-        uint256 launchThreshold;
         uint256 deadline;
+        uint256 createdAt;
         ProposalState state;
         bytes32 marketId;
         uint256[] totalPerOutcome;
@@ -85,6 +116,7 @@ contract Vault is OwnableRoles {
         uint16 year;
         string region;
         uint256 actualCost;
+        uint256 tradingBudget;
         uint256[] totalSharesPerOutcome;
     }
 
@@ -93,8 +125,8 @@ contract Vault is OwnableRoles {
         address oracle;
         bytes metadata;
         string[] outcomeNames;
-        uint256 launchThreshold;
         uint256 deadline;
+        uint256 createdAt;
         ProposalState state;
         bytes32 marketId;
         uint256[] totalPerOutcome;
@@ -104,6 +136,7 @@ contract Vault is OwnableRoles {
         uint16 year;
         string region;
         uint256 actualCost;
+        uint256 tradingBudget;
         uint256[] totalSharesPerOutcome;
         mapping(address => uint256[]) committed;
         mapping(address => bool) hasCommitted;
@@ -127,28 +160,36 @@ contract Vault is OwnableRoles {
         uint16 year,
         string region,
         address proposer,
-        uint256 launchThreshold,
         uint256 deadline
     );
     event Committed(bytes32 indexed proposalId, address indexed user, uint256[] amounts, uint256 total);
     event CommitmentWithdrawn(bytes32 indexed proposalId, address indexed user, uint256 amount);
     event MarketLaunched(
-        bytes32 indexed proposalId, bytes32 indexed marketId, uint256 actualCost, uint256 committerCount
+        bytes32 indexed proposalId,
+        bytes32 indexed marketId,
+        uint256 actualCost,
+        uint256 feesUsedForCreation,
+        uint256 excessFees,
+        uint256 committerCount
     );
     event SharesClaimed(bytes32 indexed proposalId, address indexed user, uint256[] shares, uint256 refund);
     event ProposalCancelled(bytes32 indexed proposalId);
     event RefundClaimed(address indexed user, uint256 amount);
     event SurplusRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
-    event FeeSourceUpdated(address indexed oldSource, address indexed newSource);
     event NamesMerkleRootUpdated(bytes32 oldRoot, bytes32 newRoot);
     event NameApproved(string name);
     event DefaultOracleUpdated(address indexed oldOracle, address indexed newOracle);
-    event DefaultLaunchThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
     event DefaultDeadlineDurationUpdated(uint256 oldDuration, uint256 newDuration);
+    event DefaultRegionsSeeded();
     event YearOpened(uint16 indexed year);
     event YearClosed(uint16 indexed year);
     event RegionAdded(string region);
     event RegionRemoved(string region);
+    event CommitmentFeeBpsUpdated(uint256 oldBps, uint256 newBps);
+    event MaxCreationFeeUpdated(uint256 oldFee, uint256 newFee);
+    event BatchLaunchDateUpdated(uint256 oldDate, uint256 newDate);
+    event PostBatchMinThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event PostBatchTimeoutUpdated(uint256 oldTimeout, uint256 newTimeout);
 
     // ========== ERRORS ==========
 
@@ -160,7 +201,6 @@ contract Vault is OwnableRoles {
     error ProposalExists();
     error DuplicateMarketKey();
     error InvalidDeadline();
-    error InvalidThreshold();
     error InvalidOracle();
     error InvalidOutcomes();
     error InvalidName();
@@ -168,19 +208,20 @@ contract Vault is OwnableRoles {
     error YearNotOpen();
     error InvalidRegion();
     error BelowThreshold();
+    error NotEligibleForLaunch();
     error NotWithdrawable();
     error NothingToWithdraw();
     error NothingToClaim();
     error TransferFailed();
     error ZeroAddress();
     error DefaultsNotSet();
+    error DefaultRegionsAlreadySeeded();
+    error FeeTooHigh();
 
     constructor(
         address _predictionMarket,
         address _surplusRecipient,
-        address _feeSource,
         address _defaultOracle,
-        uint256 _defaultLaunchThreshold,
         uint256 _defaultDeadlineDuration,
         address _owner
     ) {
@@ -192,26 +233,15 @@ contract Vault is OwnableRoles {
         surplusRecipient = _surplusRecipient;
         emit SurplusRecipientUpdated(address(0), _surplusRecipient);
 
-        if (_feeSource == address(0)) revert ZeroAddress();
-        feeSource = _feeSource;
-        emit FeeSourceUpdated(address(0), _feeSource);
-
         if (_defaultOracle == address(0)) revert InvalidOracle();
         defaultOracle = _defaultOracle;
         emit DefaultOracleUpdated(address(0), _defaultOracle);
 
-        defaultLaunchThreshold = _defaultLaunchThreshold;
-        emit DefaultLaunchThresholdUpdated(0, _defaultLaunchThreshold);
-
         defaultDeadlineDuration = _defaultDeadlineDuration;
         emit DefaultDeadlineDurationUpdated(0, _defaultDeadlineDuration);
 
-        // All years are locked by default — admin must openYear() before proposals can be created
-
-        // Prepopulate all 50 US state abbreviations
-        _initRegions();
-
-        usdc.approve(_predictionMarket, type(uint256).max);
+        // Approve PredictionMarket to spend our USDC (for createMarket and trade calls)
+        usdc.approve(address(predictionMarket), type(uint256).max);
     }
 
     function _initRegions() internal {
@@ -276,6 +306,13 @@ contract Vault is OwnableRoles {
         emit YearOpened(year);
     }
 
+    function seedDefaultRegions() external onlyOwner {
+        if (defaultRegionsSeeded) revert DefaultRegionsAlreadySeeded();
+        _initRegions();
+        defaultRegionsSeeded = true;
+        emit DefaultRegionsSeeded();
+    }
+
     function closeYear(uint16 year) external onlyOwner {
         yearOpen[year] = false;
         emit YearClosed(year);
@@ -315,26 +352,41 @@ contract Vault is OwnableRoles {
         surplusRecipient = _surplusRecipient;
     }
 
-    function setFeeSource(address _feeSource) external onlyOwner {
-        if (_feeSource == address(0)) revert ZeroAddress();
-        emit FeeSourceUpdated(feeSource, _feeSource);
-        feeSource = _feeSource;
-    }
-
     function setDefaultOracle(address _oracle) external onlyOwner {
         if (_oracle == address(0)) revert InvalidOracle();
         emit DefaultOracleUpdated(defaultOracle, _oracle);
         defaultOracle = _oracle;
     }
 
-    function setDefaultLaunchThreshold(uint256 _threshold) external onlyOwner {
-        emit DefaultLaunchThresholdUpdated(defaultLaunchThreshold, _threshold);
-        defaultLaunchThreshold = _threshold;
-    }
-
     function setDefaultDeadlineDuration(uint256 _duration) external onlyOwner {
         emit DefaultDeadlineDurationUpdated(defaultDeadlineDuration, _duration);
         defaultDeadlineDuration = _duration;
+    }
+
+    function setCommitmentFeeBps(uint256 _bps) external onlyOwner {
+        if (_bps > MAX_COMMITMENT_FEE_BPS) revert FeeTooHigh();
+        emit CommitmentFeeBpsUpdated(commitmentFeeBps, _bps);
+        commitmentFeeBps = _bps;
+    }
+
+    function setMaxCreationFee(uint256 _maxFee) external onlyOwner {
+        emit MaxCreationFeeUpdated(maxCreationFee, _maxFee);
+        maxCreationFee = _maxFee;
+    }
+
+    function setBatchLaunchDate(uint256 _date) external onlyOwner {
+        emit BatchLaunchDateUpdated(batchLaunchDate, _date);
+        batchLaunchDate = _date;
+    }
+
+    function setPostBatchMinThreshold(uint256 _threshold) external onlyOwner {
+        emit PostBatchMinThresholdUpdated(postBatchMinThreshold, _threshold);
+        postBatchMinThreshold = _threshold;
+    }
+
+    function setPostBatchTimeout(uint256 _timeout) external onlyOwner {
+        emit PostBatchTimeoutUpdated(postBatchTimeout, _timeout);
+        postBatchTimeout = _timeout;
     }
 
     function setUsdcAllowance(uint256 amount) external onlyOwner {
@@ -376,9 +428,28 @@ contract Vault is OwnableRoles {
         return _propose(name, year, "", proof, amounts);
     }
 
+    function proposeWithPermit(
+        string calldata name,
+        uint16 year,
+        bytes32[] calldata proof,
+        uint256[] calldata amounts,
+        PermitArgs calldata permitData
+    ) external returns (bytes32) {
+        IERC20Permit(address(usdc)).permit(
+            msg.sender,
+            address(this),
+            permitData.value,
+            permitData.deadline,
+            permitData.v,
+            permitData.r,
+            permitData.s
+        );
+        return _propose(name, year, "", proof, amounts);
+    }
+
     /**
      * @notice Proposes a market for a name in a specific region.
-     *         Region is a state name (e.g. "california") or "" for national.
+     *         Region is a state abbreviation (e.g. "CA") or "" for national.
      */
     function proposeRegional(
         string calldata name,
@@ -402,7 +473,6 @@ contract Vault is OwnableRoles {
         if (!isValidRegion(region)) revert InvalidRegion();
         if (defaultOracle == address(0)) revert DefaultsNotSet();
         if (defaultDeadlineDuration == 0) revert DefaultsNotSet();
-        if (defaultLaunchThreshold == 0) revert DefaultsNotSet();
 
         string memory lowered = _toLowerCase(name);
         // Store region as uppercase abbreviation (or "" for national)
@@ -422,7 +492,7 @@ contract Vault is OwnableRoles {
             }
         }
 
-        // questionId: vault address (20 bytes) + hash(name, year, region) truncated (12 bytes)
+        // questionId: launchpad address (20 bytes) + hash(name, year, region) truncated (12 bytes)
         bytes32 questionId = bytes32(
             (uint256(uint160(address(this))) << 96) | uint256(uint96(bytes12(marketKey)))
         );
@@ -442,8 +512,8 @@ contract Vault is OwnableRoles {
         prop.oracle = defaultOracle;
         prop.metadata = abi.encode(lowered, year, upperRegion);
         prop.outcomeNames = outcomeNames;
-        prop.launchThreshold = defaultLaunchThreshold;
         prop.deadline = deadline;
+        prop.createdAt = block.timestamp;
         prop.state = ProposalState.OPEN;
         prop.totalPerOutcome = new uint256[](2);
         prop.name = lowered;
@@ -453,7 +523,7 @@ contract Vault is OwnableRoles {
         marketKeyToProposal[marketKey] = proposalId;
 
         emit ProposalCreated(
-            proposalId, questionId, lowered, year, upperRegion, msg.sender, defaultLaunchThreshold, deadline
+            proposalId, questionId, lowered, year, upperRegion, msg.sender, deadline
         );
 
         if (amounts.length != 2) revert InvalidAmounts();
@@ -465,7 +535,7 @@ contract Vault is OwnableRoles {
     /**
      * @notice Admin creates a proposal with custom parameters, bypassing name/year validation.
      * @param year The SSA data year
-     * @param region Region string ("" for national, or state name)
+     * @param region Region string ("" for national, or state abbreviation)
      */
     function adminPropose(
         string[] calldata outcomeNames,
@@ -473,16 +543,13 @@ contract Vault is OwnableRoles {
         bytes calldata metadata,
         uint16 year,
         string calldata region,
-        uint256 launchThreshold,
         uint256 deadline
     ) external onlyOwner returns (bytes32) {
         if (outcomeNames.length < 2) revert InvalidOutcomes();
         if (oracle == address(0)) revert InvalidOracle();
         if (year == 0) revert InvalidYear();
 
-        uint256 _threshold = launchThreshold > 0 ? launchThreshold : defaultLaunchThreshold;
         uint256 _deadline = deadline > 0 ? deadline : block.timestamp + defaultDeadlineDuration;
-        if (_threshold == 0) revert InvalidThreshold();
         if (_deadline <= block.timestamp) revert InvalidDeadline();
 
         bytes32 metaHash = keccak256(abi.encode(metadata, year, region));
@@ -499,14 +566,14 @@ contract Vault is OwnableRoles {
         prop.oracle = oracle;
         prop.metadata = metadata;
         prop.outcomeNames = outcomeNames;
-        prop.launchThreshold = _threshold;
         prop.deadline = _deadline;
+        prop.createdAt = block.timestamp;
         prop.state = ProposalState.OPEN;
         prop.totalPerOutcome = new uint256[](outcomeNames.length);
         prop.year = year;
         prop.region = bytes(region).length > 0 ? _toUpperCase(region) : region;
 
-        emit ProposalCreated(proposalId, questionId, "", year, prop.region, msg.sender, _threshold, _deadline);
+        emit ProposalCreated(proposalId, questionId, "", year, prop.region, msg.sender, _deadline);
 
         return proposalId;
     }
@@ -522,6 +589,31 @@ contract Vault is OwnableRoles {
         _commit(proposalId, amounts);
     }
 
+    function commitWithPermit(bytes32 proposalId, uint256[] calldata amounts, PermitArgs calldata permitData)
+        external
+    {
+        IERC20Permit(address(usdc)).permit(
+            msg.sender,
+            address(this),
+            permitData.value,
+            permitData.deadline,
+            permitData.v,
+            permitData.r,
+            permitData.s
+        );
+        ProposalStorage storage prop = proposals[proposalId];
+        if (prop.state != ProposalState.OPEN) revert NotOpen();
+        if (block.timestamp >= prop.deadline) revert DeadlinePassed();
+        if (amounts.length != prop.outcomeNames.length) revert InvalidAmounts();
+
+        _commit(proposalId, amounts);
+    }
+
+    /**
+     * @dev Takes gross amounts from user via transferFrom. Stores gross amounts in committed
+     *      and totalPerOutcome. Fee is computed at launch time from totalCommitted.
+     *      On expiry/cancel, gross amounts are refunded in full.
+     */
     function _commit(bytes32 proposalId, uint256[] calldata amounts) internal {
         ProposalStorage storage prop = proposals[proposalId];
 
@@ -544,6 +636,7 @@ contract Vault is OwnableRoles {
         }
         prop.totalCommitted += total;
 
+        // Pull gross amount from user to Launchpad
         if (!usdc.transferFrom(msg.sender, address(this), total)) revert TransferFailed();
 
         emit Committed(proposalId, msg.sender, amounts, total);
@@ -552,47 +645,82 @@ contract Vault is OwnableRoles {
     // ========== LAUNCH ==========
 
     /**
-     * @notice Launches a market once commitments reach the threshold. Callable by anyone.
-     *         Must be called before the proposal deadline.
-     *         Creation fee is pulled from feeSource. Share distribution deferred to claimShares().
+     * @notice Launches a market once launch eligibility is met. Callable by anyone.
+     *         A commitment fee is deducted from grossCommitted:
+     *         - Up to maxCreationFee funds phantom shares (market creation fee)
+     *         - Excess fees are sent to surplusRecipient as Trifle revenue
+     *         - Remaining net funds are used for the aggregate LMSR trade
+     *         Share distribution is deferred to claimShares().
      */
     function launchMarket(bytes32 proposalId) external {
         ProposalStorage storage prop = proposals[proposalId];
         if (prop.state != ProposalState.OPEN) revert NotOpen();
-        if (block.timestamp >= prop.deadline) revert DeadlinePassed();
-        if (prop.totalCommitted < prop.launchThreshold) revert BelowThreshold();
+
+        // Check launch eligibility
+        {
+            bool eligible;
+            if (batchLaunchDate > 0 && prop.deadline <= batchLaunchDate) {
+                // Pre-batch proposal: can only launch on or after batch date
+                eligible = block.timestamp >= batchLaunchDate;
+            } else {
+                // Post-batch proposal (or batch disabled): threshold OR timeout
+                uint256 net = prop.totalCommitted
+                    - FixedPointMathLib.mulDiv(prop.totalCommitted, commitmentFeeBps, 10000);
+                eligible = net >= postBatchMinThreshold
+                    || block.timestamp >= prop.createdAt + postBatchTimeout;
+            }
+            if (!eligible) revert NotEligibleForLaunch();
+        }
+
+        // Must have at least SOME commitment
+        if (prop.totalCommitted == 0) revert BelowThreshold();
 
         prop.state = ProposalState.LAUNCHED;
 
         uint256 n = prop.outcomeNames.length;
+        uint256 grossCommitted = prop.totalCommitted;
 
-        // 1. Pull creation fee from feeSource
-        uint256 creationFee = predictionMarket.marketCreationFee() * n;
-        if (!usdc.transferFrom(feeSource, address(this), creationFee)) revert TransferFailed();
+        // Compute fee split
+        uint256 totalFees = FixedPointMathLib.mulDiv(grossCommitted, commitmentFeeBps, 10000);
 
-        // 2. Create market
+        // Determine creation fee: min(totalFees, maxCreationFee)
+        uint256 creationFeeTotal = totalFees > maxCreationFee ? maxCreationFee : totalFees;
+        uint256 creationFeePerOutcome = creationFeeTotal / n;
+        // Adjust for integer division remainder
+        creationFeeTotal = creationFeePerOutcome * n;
+
+        // Excess fees go to Trifle as direct revenue
+        uint256 excessFees = totalFees - creationFeeTotal;
+        if (excessFees > 0) {
+            if (!usdc.transfer(surplusRecipient, excessFees)) revert TransferFailed();
+        }
+
+        // 1. Create market with computed fee per outcome
+        //    Launchpad has already approved PM in constructor
         int256[] memory zeroDelta = new int256[](n);
         string[] memory outcomeNames = prop.outcomeNames;
 
         PredictionMarket.CreateMarketParams memory params = PredictionMarket.CreateMarketParams({
             oracle: prop.oracle,
-            initialBuyMaxCost: 0,
+            creationFeePerOutcome: creationFeePerOutcome,
             questionId: prop.questionId,
             surplusRecipient: surplusRecipient,
             metadata: prop.metadata,
             initialBuyShares: zeroDelta,
+            initialBuyMaxCost: 0,
             outcomeNames: outcomeNames
         });
 
         bytes32 marketId = predictionMarket.createMarket(params);
         prop.marketId = marketId;
 
-        // 3. Binary search for aggregate trade
+        // 2. Binary search for aggregate trade
+        //    Use actual available USDC as budget (accounts for PM creation fee spent in createMarket)
         PredictionMarket.MarketInfo memory info = predictionMarket.getMarketInfo(marketId);
-        int256[] memory deltaShares = _computeAggregateShares(info, prop.totalPerOutcome, prop.totalCommitted);
+        uint256 tradingBudget = usdc.balanceOf(address(this));
+        int256[] memory deltaShares = _computeAggregateShares(info, prop.totalPerOutcome, tradingBudget);
 
-        // 4. Execute aggregate trade
-        uint256 actualCost;
+        // 3. Execute aggregate trade
         {
             bool hasNonZero;
             for (uint256 i; i < n; i++) {
@@ -603,23 +731,27 @@ contract Vault is OwnableRoles {
             }
 
             if (hasNonZero) {
-                int256 costDelta = predictionMarket.trade(
+                // Standard trade: Launchpad is msg.sender, PM pulls USDC via transferFrom
+                predictionMarket.trade(
                     PredictionMarket.Trade({
                         marketId: marketId,
                         deltaShares: deltaShares,
-                        maxCost: prop.totalCommitted,
+                        maxCost: tradingBudget,
                         minPayout: 0,
                         deadline: block.timestamp
                     })
                 );
-                if (costDelta > 0) {
-                    actualCost = uint256(costDelta);
-                }
             }
         }
 
-        // 5. Store results for lazy claimShares()
-        prop.actualCost = actualCost;
+        // 4. Store results for lazy claimShares()
+        //    tradingBudget = USDC available after createMarket (for binary search + trade)
+        //    actualCost = USDC spent on the trade (= tradingBudget - remaining balance)
+        prop.tradingBudget = tradingBudget;
+        {
+            uint256 balNow = usdc.balanceOf(address(this));
+            prop.actualCost = tradingBudget > balNow ? tradingBudget - balNow : 0;
+        }
         prop.totalSharesPerOutcome = new uint256[](n);
         for (uint256 i; i < n; i++) {
             if (deltaShares[i] > 0) {
@@ -627,14 +759,17 @@ contract Vault is OwnableRoles {
             }
         }
 
-        emit MarketLaunched(proposalId, marketId, actualCost, prop.committers.length);
+        emit MarketLaunched(proposalId, marketId, prop.actualCost, creationFeeTotal, excessFees, prop.committers.length);
     }
 
     // ========== CLAIM SHARES ==========
 
     /**
      * @notice Claims outcome tokens and any USDC refund after launch.
-     *         Tokens go directly to caller's wallet — no locking, trade freely.
+     *         Tokens go directly to caller's wallet -- no locking, trade freely.
+     *         Share distribution uses gross committed proportions (everyone loses the
+     *         same fee %, so proportions are preserved).
+     *         Refund is proportional share of unspent net trading funds.
      */
     function claimShares(bytes32 proposalId) external {
         ProposalStorage storage prop = proposals[proposalId];
@@ -666,10 +801,14 @@ contract Vault is OwnableRoles {
             }
         }
 
+        // Refund is proportional share of unspent trading funds
+        // tradingBudget = USDC available after createMarket; actualCost = USDC spent on trade
+        // unspent = tradingBudget - actualCost
+        uint256 grossCommitted = prop.totalCommitted;
         uint256 refund;
-        uint256 unspent = prop.totalCommitted - prop.actualCost;
+        uint256 unspent = prop.tradingBudget > prop.actualCost ? prop.tradingBudget - prop.actualCost : 0;
         if (unspent > 0 && userTotal > 0) {
-            refund = FixedPointMathLib.mulDiv(unspent, userTotal, prop.totalCommitted);
+            refund = FixedPointMathLib.mulDiv(unspent, userTotal, grossCommitted);
             if (refund > 0) pendingRefunds[msg.sender] += refund;
         }
 
@@ -681,13 +820,16 @@ contract Vault is OwnableRoles {
     function _computeAggregateShares(
         PredictionMarket.MarketInfo memory info,
         uint256[] storage totalPerOutcome,
-        uint256 totalCommitted
+        uint256 netForTrading
     ) internal view returns (int256[] memory deltaShares) {
         uint256 n = totalPerOutcome.length;
         deltaShares = new int256[](n);
 
         uint256 lo = 0;
         uint256 hi = 2e6;
+
+        // Account for PM trading fee: total user pays = lmsrCost + lmsrCost * feeBps / 10000
+        uint256 tradingFeeBps = predictionMarket.tradingFeeBps();
 
         for (uint256 iter; iter < 64; iter++) {
             uint256 mid = (lo + hi) / 2;
@@ -699,7 +841,15 @@ contract Vault is OwnableRoles {
 
             int256 quotedCost = predictionMarket.quoteTrade(info.outcomeQs, info.alpha, deltaShares);
 
-            if (quotedCost <= int256(totalCommitted)) {
+            // Total cost including trading fee
+            uint256 totalCost;
+            if (quotedCost > 0) {
+                uint256 lmsrCost = uint256(quotedCost);
+                uint256 fee = FixedPointMathLib.mulDiv(lmsrCost, tradingFeeBps, 10000);
+                totalCost = lmsrCost + fee;
+            }
+
+            if (totalCost <= netForTrading) {
                 lo = mid;
             } else {
                 hi = mid;
@@ -713,6 +863,10 @@ contract Vault is OwnableRoles {
 
     // ========== WITHDRAWALS ==========
 
+    /**
+     * @notice Withdraw committed funds when proposal is expired or cancelled.
+     *         Returns the GROSS amount (including the fee portion) since the market never launched.
+     */
     function withdrawCommitment(bytes32 proposalId) external {
         ProposalStorage storage prop = proposals[proposalId];
         if (
@@ -733,6 +887,7 @@ contract Vault is OwnableRoles {
         }
         if (total == 0) revert NothingToWithdraw();
 
+        // Full refund of gross amount (including fee portion) since market never launched
         if (!usdc.transfer(msg.sender, total)) revert TransferFailed();
         emit CommitmentWithdrawn(proposalId, msg.sender, total);
     }
@@ -761,8 +916,8 @@ contract Vault is OwnableRoles {
             oracle: prop.oracle,
             metadata: prop.metadata,
             outcomeNames: prop.outcomeNames,
-            launchThreshold: prop.launchThreshold,
             deadline: prop.deadline,
+            createdAt: prop.createdAt,
             state: prop.state,
             marketId: prop.marketId,
             totalPerOutcome: prop.totalPerOutcome,
@@ -772,6 +927,7 @@ contract Vault is OwnableRoles {
             year: prop.year,
             region: prop.region,
             actualCost: prop.actualCost,
+            tradingBudget: prop.tradingBudget,
             totalSharesPerOutcome: prop.totalSharesPerOutcome
         });
     }

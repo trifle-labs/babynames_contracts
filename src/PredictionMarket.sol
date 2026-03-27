@@ -3,6 +3,7 @@
 pragma solidity ^0.8.19;
 
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {OwnableRoles} from "solady/auth/OwnableRoles.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {LibString} from "solady/utils/LibString.sol";
@@ -28,8 +29,11 @@ contract PredictionMarket is OwnableRoles {
     uint256 public constant PROTOCOL_MANAGER_ROLE = 1 << 0;
     uint256 public constant MARKET_CREATOR_ROLE = 1 << 1;
 
+    uint256 public constant MAX_TRADING_FEE_BPS = 1000;
+
     struct CreateMarketParams {
         address oracle;
+        uint256 creationFeePerOutcome;
         uint256 initialBuyMaxCost;
         bytes32 questionId;
         address surplusRecipient;
@@ -56,9 +60,17 @@ contract PredictionMarket is OwnableRoles {
     struct Trade {
         bytes32 marketId;
         int256[] deltaShares; // Positive = buy, negative = sell
-        uint256 maxCost; // Maximum USDC to spend (for net buys)
-        uint256 minPayout; // Minimum USDC to receive (for net sells)
+        uint256 maxCost; // Maximum USDC to spend (for net buys, including fee)
+        uint256 minPayout; // Minimum USDC to receive (for net sells, after fee)
         uint256 deadline;
+    }
+
+    struct PermitArgs {
+        uint256 value;
+        uint256 deadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
     }
 
     struct ExponentialTerms {
@@ -67,21 +79,19 @@ contract PredictionMarket is OwnableRoles {
         int256 offset;
     }
 
-    enum MigrationState {
-        None,
-        Initiated,
-        Finalized,
-        Aborted
-    }
-
     IERC20 public usdc;
     address public outcomeTokenImplementation;
 
     uint256 public targetVig;
-    /// @notice Per-outcome market creation fee in USDC (6 decimals). Total fee = marketCreationFee * nOutcomes.
+    /// @notice Per-outcome market creation fee in USDC (6 decimals). Used as default when creationFeePerOutcome is 0.
     uint256 public marketCreationFee;
     bool public allowAnyMarketCreator;
     bool private _initialized;
+
+    /// @notice Trading fee in basis points (e.g. 300 = 3%). Applied on buys and sells.
+    uint256 public tradingFeeBps = 300;
+    /// @notice Per-market trading fee override. 0 means use global tradingFeeBps.
+    mapping(bytes32 => uint256) public marketTradingFeeBps;
 
     mapping(bytes32 => MarketInfo) public markets;
     mapping(address => bytes32) public tokenToMarketId;
@@ -91,9 +101,6 @@ contract PredictionMarket is OwnableRoles {
 
     uint256 internal constant MIN_OUTCOMES = 2;
     uint256 internal maxOutcomes;
-    address public migrationContract;
-    mapping(bytes32 => MigrationState) public marketMigrationState;
-    bool public letCreatorsMigrate;
 
     event MarketCreated(
         bytes32 indexed marketId,
@@ -114,6 +121,7 @@ contract PredictionMarket is OwnableRoles {
         address indexed trader,
         uint256 alpha,
         int256 usdcFlow,
+        uint256 fee,
         int256[] deltaShares,
         uint256[] outcomeQs
     );
@@ -126,15 +134,11 @@ contract PredictionMarket is OwnableRoles {
     event MarketCreationFeeUpdated(uint256 oldFee, uint256 newFee);
     event TargetVigUpdated(uint256 oldTargetVig, uint256 newTargetVig);
     event MaxOutcomesUpdated(uint256 oldMaxOutcomes, uint256 newMaxOutcomes);
-    event MigrationContractSet(address migrationContract);
-    event MarketMigrationInitiated(bytes32 indexed marketId);
-    event MarketMigrationFinalized(bytes32 indexed marketId, uint256 usdcTransferred);
-    event MarketMigrationAborted(bytes32 indexed marketId);
-    event LetCreatorsMigrateUpdated(bool allow);
+    event TradingFeeUpdated(uint256 oldBps, uint256 newBps);
+    event MarketTradingFeeUpdated(bytes32 indexed marketId, uint256 bps);
 
     error CallerNotOracle();
     error CallerNotMarketCreator();
-    error CallerNotMigrationContract();
     error DuplicateQuestionId();
     error EmptyOutcomeName();
     error EmptyQuestionId();
@@ -148,9 +152,8 @@ contract PredictionMarket is OwnableRoles {
     error InvalidMaxOutcomes();
     error InvalidTargetVig();
     error InvalidNumOutcomes();
+    error InvalidTradingFee();
     error MarketInsolvent();
-    error InvalidMigrationState();
-    error InvalidMigrationContract();
     error ParameterOutOfRange();
     error MarketDoesNotExist();
     error InvalidSurplusRecipient();
@@ -183,20 +186,23 @@ contract PredictionMarket is OwnableRoles {
         maxOutcomes = 10;
         emit MaxOutcomesUpdated(0, maxOutcomes);
 
-        emit LetCreatorsMigrateUpdated(false);
-
-        emit MigrationContractSet(address(0));
+        tradingFeeBps = 300;
+        emit TradingFeeUpdated(0, 300);
     }
 
     // ========== MARKETS ==========
 
     /**
      * @notice Creates a new prediction market with specified outcomes
-     * @dev initialSharesPerOutcome is derived from marketCreationFee and targetVig:
-     *      s = (marketCreationFee * nOutcomes * ONE) / targetVig
-     *      This couples market depth to the fee, ensuring proportional liquidity.
+     * @dev initialSharesPerOutcome is derived from the creation fee and targetVig:
+     *      s = (totalFee * ONE) / targetVig
+     *      If params.creationFeePerOutcome is 0, the global marketCreationFee is used.
      */
     function createMarket(CreateMarketParams calldata params) external returns (bytes32) {
+        return _createMarket(params);
+    }
+
+    function _createMarket(CreateMarketParams calldata params) internal returns (bytes32) {
         if (params.questionId == bytes32(0)) revert EmptyQuestionId();
         if (questionIdToMarketId[params.questionId] != bytes32(0)) revert DuplicateQuestionId();
         if (!allowAnyMarketCreator) _checkRoles(MARKET_CREATOR_ROLE);
@@ -211,7 +217,8 @@ contract PredictionMarket is OwnableRoles {
         uint256 n = params.outcomeNames.length;
         uint256 alpha = calculateAlpha(n, targetVig);
 
-        uint256 totalFee = n * marketCreationFee;
+        uint256 feePerOutcome = params.creationFeePerOutcome > 0 ? params.creationFeePerOutcome : marketCreationFee;
+        uint256 totalFee = feePerOutcome * n;
 
         // Derive initialSharesPerOutcome from fee and targetVig
         // s = totalFee * ONE / targetVig
@@ -440,24 +447,33 @@ contract PredictionMarket is OwnableRoles {
 
     function _trade(Trade memory tradeData, address trader) internal returns (int256 costDelta) {
         if (!marketExists(tradeData.marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(tradeData.marketId);
         MarketInfo storage m = markets[tradeData.marketId];
         if (m.resolved || m.paused) revert InvalidMarketState();
         if (block.timestamp > tradeData.deadline) revert TradeExpired();
 
         costDelta = quoteTrade(m.outcomeQs, m.alpha, tradeData.deltaShares);
 
+        uint256 feeBps = marketTradingFeeBps[tradeData.marketId];
+        if (feeBps == 0) feeBps = tradingFeeBps;
+
+        uint256 fee;
         if (costDelta > 0) {
-            uint256 userPays = uint256(costDelta);
+            uint256 lmsrCost = uint256(costDelta);
+            fee = FixedPointMathLib.mulDiv(lmsrCost, feeBps, 10000);
+            uint256 userPays = lmsrCost + fee;
             if (userPays > tradeData.maxCost) revert InsufficientInputAmount();
-            m.totalUsdcIn += userPays;
+            m.totalUsdcIn += lmsrCost;
+            surplus[m.surplusRecipient] += fee;
             if (!usdc.transferFrom(trader, address(this), userPays)) revert UsdcTransferFailed();
-        } else {
-            uint256 payout = uint256(-costDelta);
-            if (payout < tradeData.minPayout) revert InsufficientOutputAmount();
-            if (payout > 0) {
-                m.totalUsdcIn -= payout;
-                if (!usdc.transfer(trader, payout)) revert UsdcTransferFailed();
+        } else if (costDelta < 0) {
+            uint256 lmsrPayout = uint256(-costDelta);
+            fee = FixedPointMathLib.mulDiv(lmsrPayout, feeBps, 10000);
+            uint256 userReceives = lmsrPayout - fee;
+            if (userReceives < tradeData.minPayout) revert InsufficientOutputAmount();
+            m.totalUsdcIn -= lmsrPayout;
+            surplus[m.surplusRecipient] += fee;
+            if (userReceives > 0) {
+                if (!usdc.transfer(trader, userReceives)) revert UsdcTransferFailed();
             }
         }
 
@@ -473,7 +489,16 @@ contract PredictionMarket is OwnableRoles {
             }
         }
 
-        emit MarketTraded(tradeData.marketId, msg.sender, m.alpha, costDelta, tradeData.deltaShares, m.outcomeQs);
+        int256 usdcFlow;
+        if (costDelta > 0) {
+            usdcFlow = int256(uint256(costDelta) + fee);
+        } else if (costDelta < 0) {
+            uint256 lmsrPayout = uint256(-costDelta);
+            uint256 userReceives = lmsrPayout - fee;
+            usdcFlow = -int256(userReceives);
+        }
+
+        emit MarketTraded(tradeData.marketId, trader, m.alpha, usdcFlow, fee, tradeData.deltaShares, m.outcomeQs);
     }
 
     /**
@@ -484,13 +509,25 @@ contract PredictionMarket is OwnableRoles {
         return _trade(tradeData, msg.sender);
     }
 
+    function tradeWithPermit(Trade memory tradeData, PermitArgs calldata permitData) external returns (int256) {
+        IERC20Permit(address(usdc)).permit(
+            msg.sender,
+            address(this),
+            permitData.value,
+            permitData.deadline,
+            permitData.v,
+            permitData.r,
+            permitData.s
+        );
+        return _trade(tradeData, msg.sender);
+    }
+
     /**
      * @notice Redeems outcome tokens for USDC after market resolution
      */
     function redeem(address token, uint256 amount) external {
         bytes32 marketId = tokenToMarketId[token];
         if (!marketExists(marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(marketId);
         MarketInfo storage m = markets[marketId];
         if (!m.resolved) revert InvalidMarketState();
         uint256 outcomeIndex = tokenToOutcomeIndex[token];
@@ -510,7 +547,6 @@ contract PredictionMarket is OwnableRoles {
      */
     function resolveMarketWithPayoutSplit(bytes32 marketId, uint256[] calldata payoutPcts) external {
         if (!marketExists(marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(marketId);
         MarketInfo storage m = markets[marketId];
         if (m.resolved) revert InvalidMarketState();
         if (msg.sender != m.oracle) revert CallerNotOracle();
@@ -545,7 +581,6 @@ contract PredictionMarket is OwnableRoles {
 
     function pauseMarket(bytes32 marketId) external {
         if (!marketExists(marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(marketId);
         MarketInfo storage m = markets[marketId];
         if (msg.sender != m.oracle) revert CallerNotOracle();
         if (m.resolved) revert InvalidMarketState();
@@ -556,7 +591,6 @@ contract PredictionMarket is OwnableRoles {
 
     function unpauseMarket(bytes32 marketId) external {
         if (!marketExists(marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(marketId);
         MarketInfo storage m = markets[marketId];
         if (msg.sender != m.oracle) revert CallerNotOracle();
         if (m.resolved) revert InvalidMarketState();
@@ -568,9 +602,9 @@ contract PredictionMarket is OwnableRoles {
     // ========== ADMIN ==========
 
     /**
-     * @notice Sets the per-outcome market creation fee
+     * @notice Sets the per-outcome market creation fee (used as default when creationFeePerOutcome is 0)
      * @dev initialSharesPerOutcome is derived at market creation time as:
-     *      s = (marketCreationFee * nOutcomes * ONE) / targetVig
+     *      s = (totalFee * ONE) / targetVig
      */
     function setMarketCreationFee(uint256 _marketCreationFee) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
         if (_marketCreationFee == 0) revert InvalidFee();
@@ -584,6 +618,18 @@ contract PredictionMarket is OwnableRoles {
         uint256 oldTargetVig = targetVig;
         targetVig = newTargetVig;
         emit TargetVigUpdated(oldTargetVig, newTargetVig);
+    }
+
+    function setTradingFee(uint256 _feeBps) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
+        if (_feeBps > MAX_TRADING_FEE_BPS) revert InvalidTradingFee();
+        emit TradingFeeUpdated(tradingFeeBps, _feeBps);
+        tradingFeeBps = _feeBps;
+    }
+
+    function setMarketTradingFee(bytes32 marketId, uint256 _feeBps) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
+        if (_feeBps > MAX_TRADING_FEE_BPS) revert InvalidTradingFee();
+        marketTradingFeeBps[marketId] = _feeBps;
+        emit MarketTradingFeeUpdated(marketId, _feeBps);
     }
 
     function withdrawSurplus() external {
@@ -617,88 +663,9 @@ contract PredictionMarket is OwnableRoles {
 
     function bailoutMarket(bytes32 marketId, uint256 bailoutAmount) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
         if (!marketExists(marketId)) revert MarketDoesNotExist();
-        _checkNotMigrated(marketId);
         MarketInfo storage m = markets[marketId];
         m.totalUsdcIn += bailoutAmount;
         if (!usdc.transferFrom(msg.sender, address(this), bailoutAmount)) revert UsdcTransferFailed();
-    }
-
-    function setMigrationContract(address newMigrationContract) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
-        if (newMigrationContract == address(0)) revert InvalidMigrationContract();
-        migrationContract = newMigrationContract;
-        emit MigrationContractSet(newMigrationContract);
-    }
-
-    function updateLetCreatorsMigrate(bool allow) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
-        if (allow == letCreatorsMigrate) return;
-        letCreatorsMigrate = allow;
-        emit LetCreatorsMigrateUpdated(allow);
-    }
-
-    function initiateMarketMigration(bytes32 marketId) external {
-        if (!marketExists(marketId)) revert MarketDoesNotExist();
-        MarketInfo storage m = markets[marketId];
-        _checkNotMigrated(marketId);
-        if (!letCreatorsMigrate || msg.sender != m.creator) {
-            _checkRoles(PROTOCOL_MANAGER_ROLE);
-        }
-        if (m.resolved || m.paused) revert InvalidMarketState();
-        if (migrationContract == address(0)) revert InvalidMigrationState();
-
-        marketMigrationState[marketId] = MigrationState.Initiated;
-        emit MarketMigrationInitiated(marketId);
-
-        m.paused = true;
-        emit MarketPausedUpdated(marketId, true);
-
-        for (uint256 i = 0; i < m.outcomeTokens.length; i++) {
-            OutcomeToken(m.outcomeTokens[i]).setPendingPredictionMarket(migrationContract);
-        }
-    }
-
-    function finalizeMarketMigration(bytes32 marketId) external {
-        MarketInfo storage m = markets[marketId];
-        if (m.resolved) revert InvalidMarketState();
-        if (marketMigrationState[marketId] != MigrationState.Initiated) revert InvalidMigrationState();
-        if (msg.sender != migrationContract) revert CallerNotMigrationContract();
-
-        for (uint256 i = 0; i < m.outcomeTokens.length; i++) {
-            if (OutcomeToken(m.outcomeTokens[i]).predictionMarket() != migrationContract) {
-                revert InvalidMigrationState();
-            }
-        }
-
-        uint256 amount = markets[marketId].totalUsdcIn;
-        marketMigrationState[marketId] = MigrationState.Finalized;
-
-        if (!usdc.transfer(migrationContract, amount)) revert UsdcTransferFailed();
-        emit MarketMigrationFinalized(marketId, amount);
-    }
-
-    function abortMigration(bytes32 marketId) external onlyRoles(PROTOCOL_MANAGER_ROLE) {
-        MarketInfo storage m = markets[marketId];
-        if (marketMigrationState[marketId] != MigrationState.Initiated) revert InvalidMigrationState();
-
-        for (uint256 i = 0; i < m.outcomeTokens.length; i++) {
-            if (OutcomeToken(m.outcomeTokens[i]).predictionMarket() != address(this)) revert InvalidMigrationState();
-        }
-
-        marketMigrationState[marketId] = MigrationState.Aborted;
-        emit MarketMigrationAborted(marketId);
-
-        m.paused = false;
-        emit MarketPausedUpdated(marketId, false);
-
-        for (uint256 i = 0; i < m.outcomeTokens.length; i++) {
-            OutcomeToken(m.outcomeTokens[i]).setPendingPredictionMarket(address(0));
-        }
-    }
-
-    function _checkNotMigrated(bytes32 marketId) internal view {
-        if (
-            marketMigrationState[marketId] == MigrationState.Initiated
-                || marketMigrationState[marketId] == MigrationState.Finalized
-        ) revert InvalidMigrationState();
     }
 
     // ========== INFO ==========

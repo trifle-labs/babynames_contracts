@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const PredictionMarketABI = require("./abi/PredictionMarket.json");
-const VaultABI = require("./abi/Vault.json");
+const LaunchpadABI = require("./abi/Launchpad.json");
 const OutcomeTokenABI = require("./abi/OutcomeToken.json");
 const RewardDistributorABI = require("./abi/RewardDistributor.json");
 
@@ -23,7 +23,7 @@ const CHAIN_IDS = {
 
 module.exports = {
   PredictionMarketABI,
-  VaultABI,
+  LaunchpadABI,
   OutcomeTokenABI,
   RewardDistributorABI,
   getDeployment,

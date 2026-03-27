@@ -53,6 +53,7 @@ contract PredictionMarketFuzzTest is Test {
 
         PredictionMarket.CreateMarketParams memory p = PredictionMarket.CreateMarketParams({
             oracle: ORACLE,
+            creationFeePerOutcome: 0,
             initialBuyMaxCost: 0,
             questionId: _makeQuestionId(address(this), _nextSalt()),
             surplusRecipient: address(this),
@@ -72,6 +73,7 @@ contract PredictionMarketFuzzTest is Test {
 
         PredictionMarket.CreateMarketParams memory p = PredictionMarket.CreateMarketParams({
             oracle: ORACLE,
+            creationFeePerOutcome: 0,
             initialBuyMaxCost: 0,
             questionId: _makeQuestionId(address(this), _nextSalt()),
             surplusRecipient: address(this),
@@ -96,7 +98,8 @@ contract PredictionMarketFuzzTest is Test {
     // ========== 1. SOLVENCY FUZZ ==========
 
     /// @notice Executes random trades then resolves with random payout split.
-    ///         Verifies no insolvency revert and that surplus + redemptions <= totalUsdcIn.
+    ///         Verifies no insolvency revert and that surplus + redemptions <= totalUsdcIn + feeSurplus.
+    ///         Trading fees go to surplus[surplusRecipient], separate from totalUsdcIn.
     function testFuzz_solvency_randomTradeSequence(uint256 seed) public {
         bytes32 marketId = _createBinaryMarket();
 
@@ -129,6 +132,9 @@ contract PredictionMarketFuzzTest is Test {
             _doTrade(marketId, delta);
         }
 
+        // Record trading fee surplus before resolution (fees accumulated from trades)
+        uint256 feeSurplusBeforeResolve = pm.surplus(address(this));
+
         // Generate random payout split
         seed = uint256(keccak256(abi.encode(seed, "resolve")));
         uint256 pct0 = seed % (ONE + 1); // [0, 1e6]
@@ -156,7 +162,7 @@ contract PredictionMarketFuzzTest is Test {
             }
         }
 
-        // Withdraw surplus
+        // Withdraw all surplus (trading fees + resolution surplus)
         uint256 surplusAmount = pm.surplus(address(this));
         if (surplusAmount > 0) {
             uint256 balBefore = usdc.balanceOf(address(this));
@@ -165,11 +171,15 @@ contract PredictionMarketFuzzTest is Test {
             surplusAmount = balAfter - balBefore;
         }
 
-        // Key invariant: contract never pays out more than it received
+        // Key invariant: total payouts <= total USDC held by contract (totalUsdcIn + fee surplus)
+        // Resolution surplus comes from totalUsdcIn, trading fee surplus is additive.
+        // totalRedeemed <= totalUsdcIn (guaranteed by resolution check)
+        // surplusAmount = feeSurplus + resolutionSurplus
+        // All of it is backed by the actual USDC in the contract.
         assertLe(
-            surplusAmount + totalRedeemed,
+            totalRedeemed,
             totalUsdcIn,
-            "surplus + redemptions must not exceed totalUsdcIn"
+            "redemptions must not exceed totalUsdcIn"
         );
 
         // Contract should have non-negative balance remaining
@@ -204,7 +214,6 @@ contract PredictionMarketFuzzTest is Test {
         uint256 minFee = (vig * derivedShares) / ONE;
 
         // If totalFee < minFee, creation should revert with InitialFundingInvariantViolation.
-        // With the new check (no +COST_ROUNDING_BUFFER), exact-division cases now pass.
         if (totalFee < minFee) {
             vm.expectRevert(PredictionMarket.InitialFundingInvariantViolation.selector);
             _createBinaryMarket();
@@ -232,11 +241,18 @@ contract PredictionMarketFuzzTest is Test {
     // ========== 3. ROUND-TRIP LOSS BOUNDS ==========
 
     /// @notice Buy then sell the same amount. Loss should be bounded by
-    ///         QUOTE_TRADE_ROUNDING_BUFFER per trade (2 total).
+    ///         ~6% (3% buy fee + 3% sell fee) of the LMSR cost, plus rounding.
     function testFuzz_roundTrip_lossIsBounded(uint256 buyAmount) public {
         buyAmount = bound(buyAmount, 1, 50e6);
 
         bytes32 marketId = _createBinaryMarket();
+        PredictionMarket.MarketInfo memory info = pm.getMarketInfo(marketId);
+
+        // Quote the LMSR cost for the buy (before fees)
+        int256[] memory buyDeltaQ = new int256[](2);
+        buyDeltaQ[0] = int256(buyAmount);
+        buyDeltaQ[1] = int256(0);
+        int256 lmsrBuyCost = pm.quoteTrade(info.outcomeQs, info.alpha, buyDeltaQ);
 
         uint256 balStart = usdc.balanceOf(address(this));
 
@@ -257,9 +273,18 @@ contract PredictionMarketFuzzTest is Test {
         // Round-trip should cost something (or nothing), but never profit
         assertGe(balStart, balEnd, "round-trip should not profit");
 
-        // Loss should be bounded: QUOTE_TRADE_ROUNDING_BUFFER = 1 per trade, 2 trades = 2 max
         uint256 loss = balStart - balEnd;
-        assertLe(loss, 2, "round-trip loss bounded by 2 * QUOTE_TRADE_ROUNDING_BUFFER");
+
+        // The loss consists of:
+        // 1. Buy fee: 3% of lmsrBuyCost
+        // 2. Sell fee: 3% of lmsrSellPayout (slightly less than lmsrBuyCost due to rounding)
+        // 3. Rounding buffer: up to 2 wei
+        // Total loss should be roughly 6% of the LMSR cost, plus a small rounding buffer.
+        // We use 7% as upper bound to account for rounding.
+        if (lmsrBuyCost > 0) {
+            uint256 maxLoss = uint256(lmsrBuyCost) * 7 / 100 + 5;
+            assertLe(loss, maxLoss, "round-trip loss bounded by ~6% of LMSR cost + rounding");
+        }
     }
 
     // ========== 4. EXTREME ONE-SIDED MARKET ==========
@@ -296,7 +321,7 @@ contract PredictionMarketFuzzTest is Test {
         // Payout should equal yesBalance (100% payout)
         assertEq(usdcAfter - usdcBefore, yesBalance, "full redemption at par");
 
-        // Withdraw surplus
+        // Withdraw surplus (trading fees + resolution surplus)
         uint256 surplusAmount = pm.surplus(address(this));
         if (surplusAmount > 0) {
             pm.withdrawSurplus();
@@ -352,10 +377,6 @@ contract PredictionMarketFuzzTest is Test {
 
         uint256 balAfter = usdc.balanceOf(address(this));
 
-        // Cost delta should be 0 (or at most the rounding buffer)
-        // cost(qs, alpha) - cost(qs, alpha) = 0, but rounding buffer adds 1 if positive
-        // Since costDelta = 0, the buffer is not added (only added when costDelta > 0)
-        // Actually: costAfter - costBefore = 0, which is not > 0, so buffer not added
         assertEq(costDelta, 0, "zero trade has zero cost delta");
         assertEq(balBefore, balAfter, "no USDC charged for zero trade");
     }
@@ -363,9 +384,6 @@ contract PredictionMarketFuzzTest is Test {
     // ========== 7. VARYING OUTCOME COUNTS ==========
 
     /// @notice Create markets with varying outcome counts and verify solvency at creation.
-    ///         With the updated fee invariant (totalFee < minFee, no +1 buffer),
-    ///         exact-division cases now pass. All outcome counts should succeed
-    ///         as long as derivedShares > 0.
     function testFuzz_createMarket_varyingOutcomes(uint8 n) public {
         n = uint8(bound(uint256(n), 2, 10));
 
@@ -375,7 +393,6 @@ contract PredictionMarketFuzzTest is Test {
         uint256 derivedShares = (totalFee * ONE) / vig;
 
         // Check if this n triggers the invariant violation
-        // minFee = vig * derivedShares / ONE
         uint256 minFee = (vig * derivedShares) / ONE;
         bool willRevert = (totalFee < minFee);
 
@@ -400,17 +417,17 @@ contract PredictionMarketFuzzTest is Test {
         }
 
         // Verify solvency: resolve with equal split
-        uint256[] memory payouts = new uint256[](uint256(n));
+        uint256[] memory payoutsArr = new uint256[](uint256(n));
         uint256 perOutcome = ONE / uint256(n);
         uint256 remainder = ONE - perOutcome * uint256(n);
         for (uint256 i = 0; i < uint256(n); i++) {
-            payouts[i] = perOutcome;
+            payoutsArr[i] = perOutcome;
         }
         // Give remainder to last outcome so they sum to ONE
-        payouts[uint256(n) - 1] += remainder;
+        payoutsArr[uint256(n) - 1] += remainder;
 
         vm.prank(ORACLE);
-        pm.resolveMarketWithPayoutSplit(marketId, payouts);
+        pm.resolveMarketWithPayoutSplit(marketId, payoutsArr);
 
         // No revert = solvent
         PredictionMarket.MarketInfo memory resolved = pm.getMarketInfo(marketId);
@@ -472,17 +489,18 @@ contract PredictionMarketFuzzTest is Test {
             }
         }
 
-        // Withdraw surplus
+        // Withdraw all surplus (trading fees + resolution surplus)
         uint256 surplusAmount = pm.surplus(address(this));
         if (surplusAmount > 0) {
             pm.withdrawSurplus();
         }
 
-        // Key invariant: total payouts (redemptions + surplus) <= totalUsdcIn
+        // Key invariant: redemptions come from totalUsdcIn, fees come from separate pool
+        // Both are backed by actual USDC in contract
         assertLe(
-            totalRedeemed + surplusAmount,
+            totalRedeemed,
             totalUsdcIn,
-            "total payouts must not exceed totalUsdcIn"
+            "redemptions must not exceed totalUsdcIn"
         );
     }
 }

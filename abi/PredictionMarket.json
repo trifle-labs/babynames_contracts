@@ -58,6 +58,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_TRADING_FEE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ONE",
     "inputs": [],
     "outputs": [
@@ -94,19 +107,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "abortMigration",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -287,6 +287,11 @@
             "internalType": "address"
           },
           {
+            "name": "creationFeePerOutcome",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "initialBuyMaxCost",
             "type": "uint256",
             "internalType": "uint256"
@@ -326,19 +331,6 @@
         "internalType": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "finalizeMarketMigration",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -535,32 +527,6 @@
   },
   {
     "type": "function",
-    "name": "initiateMarketMigration",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "letCreatorsMigrate",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "marketCreationFee",
     "inputs": [],
     "outputs": [
@@ -593,7 +559,7 @@
   },
   {
     "type": "function",
-    "name": "marketMigrationState",
+    "name": "marketTradingFeeBps",
     "inputs": [
       {
         "name": "",
@@ -604,8 +570,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint8",
-        "internalType": "enum PredictionMarket.MigrationState"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -665,19 +631,6 @@
         "name": "initialSharesPerOutcome",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "migrationContract",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -929,6 +882,24 @@
   },
   {
     "type": "function",
+    "name": "setMarketTradingFee",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "_feeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setMaxOutcomes",
     "inputs": [
       {
@@ -942,12 +913,12 @@
   },
   {
     "type": "function",
-    "name": "setMigrationContract",
+    "name": "setTargetVig",
     "inputs": [
       {
-        "name": "newMigrationContract",
-        "type": "address",
-        "internalType": "address"
+        "name": "newTargetVig",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -955,10 +926,10 @@
   },
   {
     "type": "function",
-    "name": "setTargetVig",
+    "name": "setTradingFee",
     "inputs": [
       {
-        "name": "newTargetVig",
+        "name": "_feeBps",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1084,6 +1055,97 @@
   },
   {
     "type": "function",
+    "name": "tradeWithPermit",
+    "inputs": [
+      {
+        "name": "tradeData",
+        "type": "tuple",
+        "internalType": "struct PredictionMarket.Trade",
+        "components": [
+          {
+            "name": "marketId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "deltaShares",
+            "type": "int256[]",
+            "internalType": "int256[]"
+          },
+          {
+            "name": "maxCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minPayout",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "permitData",
+        "type": "tuple",
+        "internalType": "struct PredictionMarket.PermitArgs",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tradingFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -1103,19 +1165,6 @@
         "name": "marketId",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateLetCreatorsMigrate",
-    "inputs": [
-      {
-        "name": "allow",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -1144,19 +1193,6 @@
   {
     "type": "event",
     "name": "AllowAnyMarketCreatorUpdated",
-    "inputs": [
-      {
-        "name": "allow",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LetCreatorsMigrateUpdated",
     "inputs": [
       {
         "name": "allow",
@@ -1261,51 +1297,6 @@
   },
   {
     "type": "event",
-    "name": "MarketMigrationAborted",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MarketMigrationFinalized",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "usdcTransferred",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MarketMigrationInitiated",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MarketPausedUpdated",
     "inputs": [
       {
@@ -1377,6 +1368,12 @@
         "internalType": "int256"
       },
       {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "deltaShares",
         "type": "int256[]",
         "indexed": false,
@@ -1387,6 +1384,25 @@
         "type": "uint256[]",
         "indexed": false,
         "internalType": "uint256[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketTradingFeeUpdated",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "bps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1406,19 +1422,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MigrationContractSet",
-    "inputs": [
-      {
-        "name": "migrationContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1563,6 +1566,25 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TradingFeeUpdated",
+    "inputs": [
+      {
+        "name": "oldBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyInitialized",
     "inputs": []
@@ -1575,11 +1597,6 @@
   {
     "type": "error",
     "name": "CallerNotMarketCreator",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CallerNotMigrationContract",
     "inputs": []
   },
   {
@@ -1639,16 +1656,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidMigrationContract",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidMigrationState",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidNumOutcomes",
     "inputs": []
   },
@@ -1670,6 +1677,11 @@
   {
     "type": "error",
     "name": "InvalidTargetVig",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTradingFee",
     "inputs": []
   },
   {
